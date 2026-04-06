@@ -1,0 +1,511 @@
+import Foundation
+
+public struct SessionSnapshot {
+    public var status: AgentStatus = .idle
+    public var currentTool: String?
+    public var toolDescription: String?
+    public var lastActivity: Date = Date()
+    public var cwd: String?
+    public var model: String?
+    public var permissionMode: String?
+    public var toolHistory: [ToolHistoryEntry] = []
+    public var subagents: [String: SubagentState] = [:]
+    public var startTime: Date = Date()
+    public var lastUserPrompt: String?
+    public var lastAssistantMessage: String?
+    /// Recent chat messages (max 3) for preview
+    public var recentMessages: [ChatMessage] = []
+    // Terminal info for window activation
+    public var termApp: String?        // "iTerm.app", "Apple_Terminal", etc.
+    public var itermSessionId: String?  // iTerm2 session ID for direct activation
+    public var ttyPath: String?         // /dev/ttys00X
+    public var kittyWindowId: String?   // Kitty window ID for precise focus
+    public var tmuxPane: String?        // tmux pane identifier (%0, %1, etc.)
+    public var tmuxClientTty: String?   // tmux client TTY for real terminal detection
+    public var termBundleId: String?    // __CFBundleIdentifier for precise terminal ID
+    public var source: String = "claude" // "claude" or "codex"
+    public var interrupted: Bool = false
+    /// nil = unchecked, false = not YOLO, true = YOLO
+    public var isYoloMode: Bool?
+
+    public init(startTime: Date = Date()) {
+        self.startTime = startTime
+    }
+
+    public var activeSubagentCount: Int {
+        subagents.values.filter { $0.status != .idle }.count
+    }
+
+    public mutating func addRecentMessage(_ msg: ChatMessage, maxCount: Int = 3) {
+        recentMessages.append(msg)
+        if recentMessages.count > maxCount {
+            recentMessages.removeFirst(recentMessages.count - maxCount)
+        }
+    }
+
+    public mutating func insertRecentMessage(_ msg: ChatMessage, at index: Int, maxCount: Int = 3) {
+        recentMessages.insert(msg, at: index)
+        if recentMessages.count > maxCount {
+            recentMessages.removeFirst(recentMessages.count - maxCount)
+        }
+    }
+
+    public mutating func recordTool(_ tool: String, description: String?, success: Bool, agentType: String?, maxHistory: Int) {
+        let entry = ToolHistoryEntry(tool: tool, description: description, timestamp: Date(), success: success, agentType: agentType)
+        toolHistory.append(entry)
+        if toolHistory.count > maxHistory {
+            toolHistory.removeFirst()
+        }
+    }
+
+    /// Display name: project folder, or short session ID
+    public var displayName: String {
+        if let cwd = cwd {
+            let last = (cwd as NSString).lastPathComponent
+            // If last component is a timestamp/numeric ID (e.g. CodeBuddy "20260406010126"),
+            // show the parent directory name instead
+            if last.count >= 8 && last.allSatisfy(\.isNumber) {
+                let parent = ((cwd as NSString).deletingLastPathComponent as NSString).lastPathComponent
+                if !parent.isEmpty && parent != "/" { return parent }
+            }
+            return last
+        }
+        return "Session"
+    }
+
+    /// Shortened model name: "claude-opus-4-6" → "opus"
+    public var shortModelName: String? {
+        guard let model = model else { return nil }
+        let lower = model.lowercased()
+        if lower.contains("opus") { return "opus" }
+        if lower.contains("sonnet") { return "sonnet" }
+        if lower.contains("haiku") { return "haiku" }
+        if lower.contains("gemini") { return "gemini" }
+        if let last = model.split(separator: "-").last, last.count <= 8 {
+            return String(last)
+        }
+        return String(model.prefix(8))
+    }
+
+    /// Source label for display
+    public var sourceLabel: String {
+        switch source {
+        case "claude": return "Claude"
+        case "codex": return "Codex"
+        case "gemini": return "Gemini"
+        case "cursor": return "Cursor"
+        case "qoder": return "Qoder"
+        case "droid": return "Factory"
+        case "codebuddy": return "CodeBuddy"
+        case "opencode": return "OpenCode"
+        default: return source.capitalized
+        }
+    }
+
+    public var isCodex: Bool { source == "codex" }
+    public var isClaude: Bool { source == "claude" }
+
+    /// Bundle IDs of native apps (not terminals)
+    private static let appBundleNames: [String: String] = [
+        "com.todesktop.230313mzl4w4u92": "Cursor",
+        "com.qoder.ide": "Qoder",
+        "com.factory.app": "Factory",
+        "com.tencent.codebuddy": "CodeBuddy",
+        "com.openai.codex": "Codex",
+        "ai.opencode.desktop": "OpenCode",
+    ]
+
+    /// Short terminal/app name for display tag
+    public var terminalName: String? {
+        // If termBundleId is a known app, show app name (APP mode)
+        if let bid = termBundleId, let name = Self.appBundleNames[bid] {
+            return name
+        }
+        // Check bundle ID for terminal identification (more reliable than TERM_PROGRAM)
+        if let bid = termBundleId {
+            let lower = bid.lowercased()
+            if lower.contains("warp") { return "Warp" }
+            if lower.contains("ghostty") { return "Ghostty" }
+            if lower.contains("iterm2") { return "iTerm2" }
+            if lower.contains("kitty") { return "Kitty" }
+            if lower.contains("alacritty") { return "Alacritty" }
+            if lower.contains("wezterm") { return "WezTerm" }
+        }
+        // Fallback to TERM_PROGRAM
+        guard let app = termApp else { return nil }
+        let lower = app.lowercased()
+        if lower.contains("ghostty") { return "Ghostty" }
+        if lower.contains("iterm") { return "iTerm2" }
+        if lower.contains("warp") { return "Warp" }
+        if lower.contains("alacritty") { return "Alacritty" }
+        if lower.contains("kitty") { return "Kitty" }
+        if lower.contains("terminal") { return "Terminal" }
+        return app
+    }
+
+    /// Subtitle: cwd path or model info
+    public var subtitle: String? {
+        if let cwd = cwd {
+            // Show parent/folder instead of just folder
+            let parts = cwd.split(separator: "/")
+            if parts.count >= 2 {
+                return "\(parts[parts.count - 2])/\(parts[parts.count - 1])"
+            }
+            return cwd
+        }
+        return model
+    }
+}
+
+// MARK: - Side Effects
+
+public enum SideEffect: Equatable {
+    case playSound(String)
+    case tryMonitorSession(sessionId: String)
+    case stopMonitor(sessionId: String)
+    case removeSession(sessionId: String)
+    case enqueueCompletion(sessionId: String)
+    case setActiveSession(sessionId: String?)
+}
+
+// MARK: - Pure Reducer
+
+/// Pure reducer: mutates sessions, returns side effects for the caller to execute.
+public func reduceEvent(
+    sessions: inout [String: SessionSnapshot],
+    event: HookEvent,
+    maxHistory: Int
+) -> [SideEffect] {
+    let sessionId = event.sessionId ?? "default"
+    let eventName = EventNormalizer.normalize(event.eventName)
+    var effects: [SideEffect] = []
+
+    // Ensure session exists
+    if sessions[sessionId] == nil {
+        sessions[sessionId] = SessionSnapshot()
+    }
+
+    // Always update metadata from every event
+    extractMetadata(into: &sessions, sessionId: sessionId, event: event)
+
+    // Route subagent-specific events
+    if let agentId = event.agentId {
+        let handled = handleSubagentEvent(
+            sessions: &sessions,
+            sessionId: sessionId,
+            agentId: agentId,
+            eventName: eventName,
+            event: event,
+            maxHistory: maxHistory,
+            effects: &effects
+        )
+        if handled { return effects }
+    }
+
+    // Preserve actionable states: don't let activity updates overwrite waiting states
+    let isWaiting = sessions[sessionId]?.status == .waitingApproval
+        || sessions[sessionId]?.status == .waitingQuestion
+
+    // Update this session's state
+    switch eventName {
+    case "UserPromptSubmit":
+        sessions[sessionId]?.interrupted = false
+        sessions[sessionId]?.status = .processing
+        sessions[sessionId]?.currentTool = nil
+        sessions[sessionId]?.toolDescription = nil
+        // Try multiple possible field names for user prompt
+        let prompt = event.rawJSON["prompt"] as? String
+            ?? event.rawJSON["user_prompt"] as? String
+            ?? event.rawJSON["message"] as? String
+            ?? event.rawJSON["input"] as? String
+            ?? event.rawJSON["content"] as? String
+        if let prompt {
+            sessions[sessionId]?.lastUserPrompt = prompt
+            if sessions[sessionId]?.recentMessages.last?.isUser == true {
+                sessions[sessionId]?.recentMessages.removeLast()
+            }
+            sessions[sessionId]?.addRecentMessage(ChatMessage(isUser: true, text: prompt))
+        }
+    case "PreToolUse":
+        if !isWaiting {
+            sessions[sessionId]?.status = .running
+            sessions[sessionId]?.currentTool = event.toolName
+            sessions[sessionId]?.toolDescription = event.toolDescription
+        }
+    case "PostToolUse":
+        if let tool = sessions[sessionId]?.currentTool {
+            let desc = sessions[sessionId]?.toolDescription
+            sessions[sessionId]?.recordTool(tool, description: desc, success: true, agentType: nil, maxHistory: maxHistory)
+        }
+        if !isWaiting {
+            sessions[sessionId]?.status = .processing
+            sessions[sessionId]?.currentTool = nil
+            sessions[sessionId]?.toolDescription = nil
+        }
+    case "PostToolUseFailure":
+        if let tool = sessions[sessionId]?.currentTool {
+            let desc = sessions[sessionId]?.toolDescription
+            sessions[sessionId]?.recordTool(tool, description: desc, success: false, agentType: nil, maxHistory: maxHistory)
+        }
+        if !isWaiting {
+            sessions[sessionId]?.status = .processing
+            sessions[sessionId]?.currentTool = nil
+            sessions[sessionId]?.toolDescription = nil
+        }
+    case "PermissionDenied":
+        if !isWaiting {
+            sessions[sessionId]?.status = .processing
+            sessions[sessionId]?.currentTool = nil
+            sessions[sessionId]?.toolDescription = nil
+        }
+    case "SubagentStart":
+        if !isWaiting {
+            sessions[sessionId]?.status = .running
+            sessions[sessionId]?.currentTool = "Agent"
+            sessions[sessionId]?.toolDescription = event.rawJSON["agent_type"] as? String
+        }
+    case "SubagentStop":
+        if !isWaiting {
+            sessions[sessionId]?.status = .processing
+            sessions[sessionId]?.currentTool = nil
+            sessions[sessionId]?.toolDescription = nil
+        }
+    case "AfterAgentResponse":
+        // Cursor-specific: AI reply arrives here (in "text" field), not in Stop
+        if let text = event.rawJSON["text"] as? String, !text.isEmpty {
+            sessions[sessionId]?.lastAssistantMessage = text
+            sessions[sessionId]?.addRecentMessage(ChatMessage(isUser: false, text: text))
+        }
+        sessions[sessionId]?.status = .processing
+    case "Stop":
+        // Detect ESC/Ctrl+C interruption
+        let stopReason = event.rawJSON["stop_reason"] as? String ?? ""
+        sessions[sessionId]?.interrupted = (stopReason == "user" || stopReason == "interrupted")
+        sessions[sessionId]?.status = .idle
+        sessions[sessionId]?.currentTool = nil
+        sessions[sessionId]?.toolDescription = nil
+        let assistantMsg = event.rawJSON["last_assistant_message"] as? String
+            ?? event.rawJSON["text"] as? String
+            ?? event.rawJSON["message"] as? String
+        if let msg = assistantMsg {
+            sessions[sessionId]?.lastAssistantMessage = msg
+            sessions[sessionId]?.addRecentMessage(ChatMessage(isUser: false, text: msg))
+        } else if sessions[sessionId]?.lastAssistantMessage == nil,
+                  sessions[sessionId]?.recentMessages.last?.isUser == true {
+            // No reply content from hook (e.g. CodeBuddy) -- add placeholder
+            sessions[sessionId]?.addRecentMessage(ChatMessage(isUser: false, text: "[回复完成]"))
+        }
+        // Try to capture user prompt from Stop event if not already set
+        if sessions[sessionId]?.lastUserPrompt == nil {
+            if let prompt = event.rawJSON["last_user_message"] as? String {
+                sessions[sessionId]?.lastUserPrompt = prompt
+                let insertAt = max(0, (sessions[sessionId]?.recentMessages.count ?? 1) - 1)
+                sessions[sessionId]?.insertRecentMessage(ChatMessage(isUser: true, text: prompt), at: insertAt)
+            }
+        }
+        effects.append(.enqueueCompletion(sessionId: sessionId))
+    case "SessionStart":
+        effects.append(.stopMonitor(sessionId: sessionId))
+        sessions[sessionId] = SessionSnapshot(startTime: Date())
+        // Re-apply metadata from this event (common extraction above wrote to the old session)
+        if let cwd = event.rawJSON["cwd"] as? String, !cwd.isEmpty { sessions[sessionId]?.cwd = cwd }
+        if let model = event.rawJSON["model"] as? String, !model.isEmpty { sessions[sessionId]?.model = model }
+        if let source = event.rawJSON["_source"] as? String, !source.isEmpty {
+            sessions[sessionId]?.source = source
+        }
+        if let app = event.rawJSON["_term_app"] as? String, !app.isEmpty { sessions[sessionId]?.termApp = app }
+        if let bundle = event.rawJSON["_term_bundle"] as? String, !bundle.isEmpty { sessions[sessionId]?.termBundleId = bundle }
+        if let ses = event.rawJSON["_iterm_session"] as? String, !ses.isEmpty { sessions[sessionId]?.itermSessionId = ses }
+        if let tty = event.rawJSON["_tty"] as? String, !tty.isEmpty { sessions[sessionId]?.ttyPath = tty }
+        if let kitty = event.rawJSON["_kitty_window"] as? String, !kitty.isEmpty { sessions[sessionId]?.kittyWindowId = kitty }
+        if let pane = event.rawJSON["_tmux_pane"] as? String, !pane.isEmpty { sessions[sessionId]?.tmuxPane = pane }
+        if let roots = event.rawJSON["workspace_roots"] as? [String], let first = roots.first, !first.isEmpty {
+            sessions[sessionId]?.cwd = first
+        }
+        effects.append(.tryMonitorSession(sessionId: sessionId))
+    case "SessionEnd":
+        // Side effect: AppState handles pending permission deny before removal
+        effects.append(.removeSession(sessionId: sessionId))
+        return effects
+    case "Notification":
+        if let msg = event.rawJSON["message"] as? String {
+            sessions[sessionId]?.toolDescription = msg
+        }
+        if QuestionPayload.from(event: event) != nil {
+            sessions[sessionId]?.status = .waitingQuestion
+        }
+    case "PreCompact":
+        sessions[sessionId]?.status = .processing
+        sessions[sessionId]?.toolDescription = "Compacting context\u{2026}"
+    default:
+        break
+    }
+
+    sessions[sessionId]?.lastActivity = Date()
+
+    // Ensure process monitor is set up (covers sessions created implicitly)
+    if sessions[sessionId]?.cwd != nil {
+        effects.append(.tryMonitorSession(sessionId: sessionId))
+    }
+
+    // Trigger sound for this event
+    effects.append(.playSound(eventName))
+
+    // Switch display to the session that just had activity
+    if eventName == "Stop" {
+        // Stop event: keep activeSessionId on completed session (set by enqueueCompletion)
+    } else if sessions[sessionId]?.status != .idle {
+        effects.append(.setActiveSession(sessionId: sessionId))
+    }
+    // Note: the "else if activeSessionId == sessionId → mostActive" case
+    // is handled by AppState since it needs to check current activeSessionId
+
+    return effects
+}
+
+// MARK: - Private Helpers
+
+private func extractMetadata(into sessions: inout [String: SessionSnapshot], sessionId: String, event: HookEvent) {
+    if let cwd = event.rawJSON["cwd"] as? String, !cwd.isEmpty {
+        sessions[sessionId]?.cwd = cwd
+    } else if sessions[sessionId]?.cwd == nil,
+              let roots = event.rawJSON["workspace_roots"] as? [String],
+              let first = roots.first, !first.isEmpty {
+        sessions[sessionId]?.cwd = first
+    } else if sessions[sessionId]?.cwd == nil,
+              let tp = event.rawJSON["transcript_path"] as? String, !tp.isEmpty {
+        // Cursor: extract project dir from transcript_path
+        // e.g. ~/.cursor/projects/<project>/agent-transcripts/... → ~/.cursor/projects/<project>
+        let parts = tp.split(separator: "/")
+        if let idx = parts.firstIndex(of: "projects"), idx + 1 < parts.count {
+            let projectName = String(parts[idx + 1])
+            sessions[sessionId]?.cwd = "/\(parts[...idx].joined(separator: "/"))/\(projectName)"
+        }
+    }
+    if let model = event.rawJSON["model"] as? String, !model.isEmpty {
+        sessions[sessionId]?.model = model
+    }
+    if let mode = event.rawJSON["permission_mode"] as? String {
+        sessions[sessionId]?.permissionMode = mode
+    }
+    // Terminal info (injected by hook script)
+    if let app = event.rawJSON["_term_app"] as? String, !app.isEmpty, app != "unknown" {
+        sessions[sessionId]?.termApp = app
+    }
+    if let ses = event.rawJSON["_iterm_session"] as? String, !ses.isEmpty {
+        sessions[sessionId]?.itermSessionId = ses
+    }
+    if let tty = event.rawJSON["_tty"] as? String, !tty.isEmpty {
+        sessions[sessionId]?.ttyPath = tty
+    }
+    // Extended terminal info (from native bridge binary)
+    if let kitty = event.rawJSON["_kitty_window"] as? String, !kitty.isEmpty {
+        sessions[sessionId]?.kittyWindowId = kitty
+    }
+    if let pane = event.rawJSON["_tmux_pane"] as? String, !pane.isEmpty {
+        sessions[sessionId]?.tmuxPane = pane
+    }
+    if let tmuxTty = event.rawJSON["_tmux_client_tty"] as? String, !tmuxTty.isEmpty {
+        sessions[sessionId]?.tmuxClientTty = tmuxTty
+    }
+    if let bundle = event.rawJSON["_term_bundle"] as? String, !bundle.isEmpty {
+        sessions[sessionId]?.termBundleId = bundle
+    }
+    // Fallback: extract terminal info from _env sub-object (OpenCode plugin format)
+    if let env = event.rawJSON["_env"] as? [String: String] {
+        if sessions[sessionId]?.termApp == nil,
+           let app = env["TERM_PROGRAM"], !app.isEmpty {
+            sessions[sessionId]?.termApp = app
+        }
+        if sessions[sessionId]?.termBundleId == nil,
+           let bundle = env["__CFBundleIdentifier"], !bundle.isEmpty {
+            sessions[sessionId]?.termBundleId = bundle
+        }
+        if sessions[sessionId]?.itermSessionId == nil,
+           let ses = env["ITERM_SESSION_ID"], !ses.isEmpty {
+            // Extract GUID after "w0t0p0:" prefix
+            if let colonIdx = ses.firstIndex(of: ":") {
+                sessions[sessionId]?.itermSessionId = String(ses[ses.index(after: colonIdx)...])
+            } else {
+                sessions[sessionId]?.itermSessionId = ses
+            }
+        }
+        if sessions[sessionId]?.kittyWindowId == nil,
+           let kitty = env["KITTY_WINDOW_ID"], !kitty.isEmpty {
+            sessions[sessionId]?.kittyWindowId = kitty
+        }
+        if sessions[sessionId]?.tmuxPane == nil,
+           let pane = env["TMUX_PANE"], !pane.isEmpty {
+            sessions[sessionId]?.tmuxPane = pane
+        }
+    }
+    if let source = event.rawJSON["_source"] as? String, !source.isEmpty {
+        sessions[sessionId]?.source = source
+    }
+}
+
+/// Handle subagent events. Returns true if the event was consumed.
+private func handleSubagentEvent(
+    sessions: inout [String: SessionSnapshot],
+    sessionId: String,
+    agentId: String,
+    eventName: String,
+    event: HookEvent,
+    maxHistory: Int,
+    effects: inout [SideEffect]
+) -> Bool {
+    switch eventName {
+    case "SubagentStart":
+        let agentType = event.rawJSON["agent_type"] as? String ?? "Agent"
+        sessions[sessionId]?.subagents[agentId] = SubagentState(
+            agentId: agentId,
+            agentType: agentType
+        )
+        sessions[sessionId]?.lastActivity = Date()
+        if sessions[sessionId]?.status != .idle {
+            effects.append(.setActiveSession(sessionId: sessionId))
+        }
+        return true
+
+    case "SubagentStop":
+        sessions[sessionId]?.subagents.removeValue(forKey: agentId)
+        sessions[sessionId]?.lastActivity = Date()
+        return true
+
+    case "PreToolUse":
+        sessions[sessionId]?.subagents[agentId]?.status = .running
+        sessions[sessionId]?.subagents[agentId]?.currentTool = event.toolName
+        sessions[sessionId]?.subagents[agentId]?.toolDescription = event.toolDescription
+        sessions[sessionId]?.subagents[agentId]?.lastActivity = Date()
+        sessions[sessionId]?.lastActivity = Date()
+        return true
+
+    case "PostToolUse":
+        if let tool = sessions[sessionId]?.subagents[agentId]?.currentTool {
+            let agentType = sessions[sessionId]?.subagents[agentId]?.agentType
+            let desc = sessions[sessionId]?.subagents[agentId]?.toolDescription
+            sessions[sessionId]?.recordTool(tool, description: desc, success: true, agentType: agentType, maxHistory: maxHistory)
+        }
+        sessions[sessionId]?.subagents[agentId]?.status = .processing
+        sessions[sessionId]?.subagents[agentId]?.currentTool = nil
+        sessions[sessionId]?.subagents[agentId]?.toolDescription = nil
+        sessions[sessionId]?.subagents[agentId]?.lastActivity = Date()
+        sessions[sessionId]?.lastActivity = Date()
+        return true
+
+    case "PostToolUseFailure":
+        if let tool = sessions[sessionId]?.subagents[agentId]?.currentTool {
+            let agentType = sessions[sessionId]?.subagents[agentId]?.agentType
+            let desc = sessions[sessionId]?.subagents[agentId]?.toolDescription
+            sessions[sessionId]?.recordTool(tool, description: desc, success: false, agentType: agentType, maxHistory: maxHistory)
+        }
+        sessions[sessionId]?.subagents[agentId]?.status = .processing
+        sessions[sessionId]?.subagents[agentId]?.currentTool = nil
+        sessions[sessionId]?.subagents[agentId]?.toolDescription = nil
+        sessions[sessionId]?.lastActivity = Date()
+        return true
+
+    default:
+        return false  // Fall through to normal session handling
+    }
+}

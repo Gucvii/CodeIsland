@@ -18,6 +18,7 @@ enum SettingsKey {
 
     // Display
     static let maxPanelHeight = "maxPanelHeight"
+    static let maxVisibleSessions = "maxVisibleSessions"
     static let contentFontSize = "contentFontSize"
     static let aiMessageLines = "aiMessageLines"
     static let showAgentDetails = "showAgentDetails"
@@ -49,6 +50,7 @@ struct SettingsDefaults {
     static let sessionTimeout = 30
 
     static let maxPanelHeight = 560
+    static let maxVisibleSessions = 5
     static let contentFontSize = 11
     static let aiMessageLines = 1
     static let showAgentDetails = false
@@ -82,6 +84,7 @@ class SettingsManager {
             SettingsKey.collapseOnMouseLeave: SettingsDefaults.collapseOnMouseLeave,
             SettingsKey.sessionTimeout: SettingsDefaults.sessionTimeout,
             SettingsKey.maxPanelHeight: SettingsDefaults.maxPanelHeight,
+            SettingsKey.maxVisibleSessions: SettingsDefaults.maxVisibleSessions,
             SettingsKey.contentFontSize: SettingsDefaults.contentFontSize,
             SettingsKey.aiMessageLines: SettingsDefaults.aiMessageLines,
             SettingsKey.showAgentDetails: SettingsDefaults.showAgentDetails,

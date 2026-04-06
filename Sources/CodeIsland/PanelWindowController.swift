@@ -73,10 +73,11 @@ class PanelWindowController {
     private let appState: AppState
 
     private var panelSize: NSSize {
-        let maxH = CGFloat(SettingsManager.shared.maxPanelHeight)
+        let maxSessions = CGFloat(max(2, UserDefaults.standard.integer(forKey: SettingsKey.maxVisibleSessions)))
+        let maxH = max(300, maxSessions * 90 + 60)
         let screenW = chosenScreen().frame.width
         let width = min(620, screenW - 40)
-        return NSSize(width: width, height: max(maxH, 300))
+        return NSSize(width: width, height: maxH)
     }
 
     private var visibilityTimer: Timer?
@@ -249,6 +250,7 @@ class PanelWindowController {
                     self.lastDisplayChoice = newChoice
                     self.rebuildForCurrentScreen()
                 } else {
+                    self.updateVisibility()
                     self.updatePosition()
                 }
             }

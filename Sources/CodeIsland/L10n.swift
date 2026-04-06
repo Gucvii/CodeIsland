@@ -74,8 +74,10 @@ final class L10n: ObservableObject {
         "tool_history_limit_desc": "Max number of recent tool calls shown per session",
 
         // Appearance
+        "preview": "Preview",
         "panel": "Panel",
-        "max_panel_height": "Max Panel Height",
+        "max_visible_sessions": "Max Visible Sessions",
+        "max_visible_sessions_desc": "Sessions beyond this limit will be scrollable",
         "default": "Default",
         "content": "Content",
         "content_font_size": "Content Font Size",
@@ -166,6 +168,8 @@ final class L10n: ObservableObject {
         "status_idle": "Idle",
         "other": "Other",
         "n_sessions": "sessions",
+        "scroll_for_more": "Scroll for more",
+        "scroll_hidden": "more below",
         "lines": "lines",
     ]
 
@@ -212,8 +216,10 @@ final class L10n: ObservableObject {
         "tool_history_limit_desc": "每个会话显示的最近工具调用数量上限",
 
         // Appearance
+        "preview": "预览",
         "panel": "面板",
-        "max_panel_height": "最大面板高度",
+        "max_visible_sessions": "最大显示会话数",
+        "max_visible_sessions_desc": "超出数量的会话将通过滚动查看",
         "default": "默认",
         "content": "内容",
         "content_font_size": "内容字体大小",
@@ -304,6 +310,8 @@ final class L10n: ObservableObject {
         "status_idle": "空闲",
         "other": "其他",
         "n_sessions": "个会话",
+        "scroll_for_more": "向下滚动查看更多",
+        "scroll_hidden": "个未显示",
         "lines": "行",
     ]
 }

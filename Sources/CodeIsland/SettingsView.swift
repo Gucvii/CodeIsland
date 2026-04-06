@@ -409,40 +409,31 @@ private struct CLIStatusRow: View {
 
 private struct AppearancePage: View {
     @ObservedObject private var l10n = L10n.shared
-    @AppStorage(SettingsKey.maxPanelHeight) private var maxPanelHeight = SettingsDefaults.maxPanelHeight
+    @AppStorage(SettingsKey.maxVisibleSessions) private var maxVisibleSessions = SettingsDefaults.maxVisibleSessions
     @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
     @AppStorage(SettingsKey.aiMessageLines) private var aiMessageLines = SettingsDefaults.aiMessageLines
     @AppStorage(SettingsKey.showAgentDetails) private var showAgentDetails = SettingsDefaults.showAgentDetails
 
-    private let minPanelHeight: Double = 300
-    private var maxPanelHeightLimit: Double {
-        let screenH = Double(NSScreen.main?.frame.height ?? 900)
-        return min(max(screenH * 0.8, 500), 1200)
-    }
-
     var body: some View {
         Form {
+            Section(l10n["preview"]) {
+                AppearancePreview(
+                    fontSize: contentFontSize,
+                    lineLimit: aiMessageLines,
+                    showDetails: showAgentDetails
+                )
+            }
+
             Section(l10n["panel"]) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(l10n["max_panel_height"])
-                        Spacer()
-                        Text("\(maxPanelHeight)pt")
-                            .foregroundStyle(.secondary)
-                        Button(l10n["default"]) {
-                            maxPanelHeight = SettingsDefaults.maxPanelHeight
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.blue)
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { Double(maxPanelHeight) },
-                            set: { maxPanelHeight = Int($0) }
-                        ),
-                        in: minPanelHeight...maxPanelHeightLimit,
-                        step: 10
-                    )
+                Picker(selection: $maxVisibleSessions) {
+                    Text("3").tag(3)
+                    Text("5").tag(5)
+                    Text("8").tag(8)
+                    Text("10").tag(10)
+                    Text(l10n["unlimited"]).tag(99)
+                } label: {
+                    Text(l10n["max_visible_sessions"])
+                    Text(l10n["max_visible_sessions_desc"])
                 }
             }
 
@@ -464,6 +455,95 @@ private struct AppearancePage: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Live preview mimicking the real SessionCard layout.
+private struct AppearancePreview: View {
+    let fontSize: Int
+    let lineLimit: Int
+    let showDetails: Bool
+
+    private var fs: CGFloat { CGFloat(fontSize) }
+    private let green = Color(red: 0.3, green: 0.85, blue: 0.4)
+    private let aiColor = Color(red: 0.85, green: 0.47, blue: 0.34)
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            // Column 1: Mascot
+            VStack(spacing: 3) {
+                MascotView(source: "claude", status: .processing, size: 32)
+                if showDetails {
+                    HStack(spacing: 1) {
+                        MiniAgentIcon(active: true, size: 8)
+                        MiniAgentIcon(active: false, size: 8)
+                    }
+                }
+            }
+            .frame(width: 36)
+
+            // Column 2: Content
+            VStack(alignment: .leading, spacing: 6) {
+                // Header
+                HStack(spacing: 6) {
+                    Text("my-project")
+                        .font(.system(size: fs + 2, weight: .bold, design: .monospaced))
+                        .foregroundStyle(green)
+                    Spacer()
+                    Text("3m")
+                        .font(.system(size: max(9, fs - 1.5), weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(.white.opacity(0.08)))
+                }
+
+                // Chat
+                VStack(alignment: .leading, spacing: 3) {
+                    // User prompt
+                    HStack(alignment: .top, spacing: 4) {
+                        Text(">")
+                            .font(.system(size: fs, weight: .bold, design: .monospaced))
+                            .foregroundStyle(green)
+                        Text("Fix the login bug")
+                            .font(.system(size: fs, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .lineLimit(1)
+                    }
+                    // AI reply
+                    HStack(alignment: .top, spacing: 4) {
+                        Text("$")
+                            .font(.system(size: fs, weight: .bold, design: .monospaced))
+                            .foregroundStyle(aiColor)
+                        Text("I've analyzed the codebase and found the issue in the authentication module. The token validation was skipping the expiry check when refreshing sessions.")
+                            .font(.system(size: fs, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(lineLimit > 0 ? lineLimit : nil)
+                            .truncationMode(.tail)
+                    }
+                    // Working indicator
+                    HStack(spacing: 4) {
+                        Text("$")
+                            .font(.system(size: fs, weight: .bold, design: .monospaced))
+                            .foregroundStyle(aiColor)
+                        Text("Edit src/auth.ts")
+                            .font(.system(size: fs, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.leading, 4)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(white: 0.05))
+        )
+        .animation(.easeInOut(duration: 0.25), value: fontSize)
+        .animation(.easeInOut(duration: 0.25), value: lineLimit)
+        .animation(.easeInOut(duration: 0.25), value: showDetails)
     }
 }
 
@@ -722,7 +802,7 @@ private struct BehaviorToggleRow: View {
     var body: some View {
         Toggle(isOn: $isOn) {
             HStack(spacing: 12) {
-                BehaviorMiniAnim(animation: animation)
+                NotchMiniAnim(animation: animation)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                     Text(desc)
@@ -732,143 +812,192 @@ private struct BehaviorToggleRow: View {
     }
 }
 
-/// Looping mini animation showing what a behavior setting does.
-private struct BehaviorMiniAnim: View {
+/// Canvas-based notch animation with smooth interpolation.
+private struct NotchMiniAnim: View {
     let animation: BehaviorAnim
-    private let w: CGFloat = 64
-    private let h: CGFloat = 42
+    private let orange = Color(red: 0.96, green: 0.65, blue: 0.14)
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.04)) { ctx in
-            let t = ctx.date.timeIntervalSinceReferenceDate
+        TimelineView(.periodic(from: .now, by: 0.03)) { ctx in
             Canvas { c, sz in
-                draw(c, sz: sz, t: t)
+                draw(c, sz: sz, t: ctx.date.timeIntervalSinceReferenceDate)
             }
         }
-        .frame(width: w, height: h)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .frame(width: 72, height: 48)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5))
+    }
+
+    private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: Double) -> CGFloat {
+        a + (b - a) * CGFloat(min(1, max(0, t)))
     }
 
     private func draw(_ c: GraphicsContext, sz: CGSize, t: Double) {
-        let bg = Color(nsColor: .windowBackgroundColor).opacity(0.6)
-        c.fill(Path(CGRect(origin: .zero, size: sz)), with: .color(bg))
-
         switch animation {
-        case .hideFullscreen:   drawHideFullscreen(c, sz: sz, t: t)
-        case .hideNoSession:    drawHideNoSession(c, sz: sz, t: t)
-        case .smartSuppress:    drawSmartSuppress(c, sz: sz, t: t)
-        case .collapseMouseLeave: drawCollapseMouseLeave(c, sz: sz, t: t)
+        case .hideFullscreen:   drawFullscreen(c, sz: sz, t: t)
+        case .hideNoSession:    drawNoSession(c, sz: sz, t: t)
+        case .smartSuppress:    drawSuppress(c, sz: sz, t: t)
+        case .collapseMouseLeave: drawMouseLeave(c, sz: sz, t: t)
         }
     }
 
-    // Shared: draw a mini screen outline
-    private func drawScreen(_ c: GraphicsContext, sz: CGSize, scale: CGFloat = 1.0) {
-        let sw: CGFloat = 46 * scale
-        let sh: CGFloat = 28 * scale
-        let sx = (sz.width - sw) / 2
-        let sy = (sz.height - sh) / 2 + 2
-        let rect = CGRect(x: sx, y: sy, width: sw, height: sh)
-        c.stroke(Path(roundedRect: rect, cornerRadius: 3), with: .color(.secondary.opacity(0.4)), lineWidth: 1)
-        // Screen "content" lines
-        for i in 0..<3 {
-            let ly = sy + 8 + CGFloat(i) * 6
-            let lw = sw * (i == 2 ? 0.4 : 0.65)
-            c.fill(Path(CGRect(x: sx + 6, y: ly, width: lw, height: 2)),
-                   with: .color(.secondary.opacity(0.15)))
+    /// Draw a notch pill: smooth w/h/opacity, with orange eyes + content lines when expanded.
+    private func drawPill(_ c: GraphicsContext, sz: CGSize,
+                          w: CGFloat, h: CGFloat, op: Double,
+                          flashColor: Color? = nil) {
+        guard op > 0.01 else { return }
+        let x = (sz.width - w) / 2
+        let r = min(w, h) * 0.45
+        let rect = CGRect(x: x, y: 0, width: w, height: h)
+        let pill = Path(roundedRect: rect, cornerRadius: r, style: .continuous)
+        c.fill(pill, with: .color(Color(white: 0.06).opacity(op)))
+
+        // Eyes — always visible when notch is visible
+        let eyeSize: CGFloat = h > 16 ? 3.5 : 2.5
+        let eyeY: CGFloat = h > 16 ? 5 : max(2, (h - eyeSize) / 2)
+        let eyeGap: CGFloat = h > 16 ? 5 : 3
+        c.fill(Path(CGRect(x: sz.width / 2 - eyeGap - eyeSize / 2, y: eyeY,
+                           width: eyeSize, height: eyeSize)),
+               with: .color(orange.opacity(op)))
+        c.fill(Path(CGRect(x: sz.width / 2 + eyeGap - eyeSize / 2, y: eyeY,
+                           width: eyeSize, height: eyeSize)),
+               with: .color(orange.opacity(op)))
+
+        // Content lines — only when expanded
+        if h > 16 {
+            let contentOp = op * Double(min(1, (h - 16) / 10))
+            let lx = x + 6
+            let widths: [CGFloat] = [w * 0.6, w * 0.45, w * 0.55]
+            for (i, lw) in widths.enumerated() {
+                let ly = 12 + CGFloat(i) * 5
+                if ly + 2 < h - 3 {
+                    c.fill(Path(CGRect(x: lx, y: ly, width: lw, height: 2)),
+                           with: .color(.white.opacity(0.3 * contentOp * (1 - Double(i) * 0.2))))
+                }
+            }
+        }
+
+        // Flash overlay
+        if let color = flashColor {
+            c.fill(pill, with: .color(color))
         }
     }
 
-    // Shared: draw a mini notch pill
-    private func drawNotch(_ c: GraphicsContext, sz: CGSize, opacity: Double, expanded: Bool = false) {
-        let nw: CGFloat = expanded ? 30 : 14
-        let nh: CGFloat = expanded ? 14 : 5
-        let nx = (sz.width - nw) / 2
-        let ny: CGFloat = (sz.height - 28) / 2 + 2 - 1
-        let rect = CGRect(x: nx, y: ny, width: nw, height: nh)
-        c.fill(Path(roundedRect: rect, cornerRadius: nh / 2, style: .continuous),
-               with: .color(Color.orange.opacity(opacity)))
-    }
-
-    // 1) Fullscreen: screen expands → notch fades
-    private func drawHideFullscreen(_ c: GraphicsContext, sz: CGSize, t: Double) {
-        let cycle = t.truncatingRemainder(dividingBy: 3.0) / 3.0
-        // 0-0.3: normal, 0.3-0.5: expand, 0.5-0.8: fullscreen, 0.8-1: shrink back
-        let scale: CGFloat = cycle < 0.3 ? 1.0 :
-            cycle < 0.5 ? 1.0 + (cycle - 0.3) / 0.2 * 0.25 :
-            cycle < 0.8 ? 1.25 :
-            1.25 - (cycle - 0.8) / 0.2 * 0.25
-        let notchOp = cycle < 0.3 ? 0.8 :
-            cycle < 0.5 ? 0.8 - (cycle - 0.3) / 0.2 * 0.8 :
-            cycle < 0.8 ? 0.0 :
-            (cycle - 0.8) / 0.2 * 0.8
-        drawScreen(c, sz: sz, scale: scale)
-        drawNotch(c, sz: sz, opacity: notchOp)
-    }
-
-    // 2) No session: sessions blink out → notch fades
-    private func drawHideNoSession(_ c: GraphicsContext, sz: CGSize, t: Double) {
-        let cycle = t.truncatingRemainder(dividingBy: 3.0) / 3.0
-        drawScreen(c, sz: sz)
-        // Session dots
-        let dotOp = cycle < 0.4 ? 1.0 : cycle < 0.6 ? 1.0 - (cycle - 0.4) / 0.2 : cycle < 0.85 ? 0.0 : (cycle - 0.85) / 0.15
-        let cx = sz.width / 2
-        let cy = sz.height / 2 + 4
-        for i in 0..<2 {
-            let dx: CGFloat = CGFloat(i) * 8 - 4
-            c.fill(Path(ellipseIn: CGRect(x: cx + dx - 2, y: cy - 2, width: 4, height: 4)),
-                   with: .color(.green.opacity(0.7 * dotOp)))
-        }
-        let notchOp = cycle < 0.5 ? 0.8 : cycle < 0.7 ? 0.8 - (cycle - 0.5) / 0.2 * 0.8 : cycle < 0.85 ? 0.0 : (cycle - 0.85) / 0.15 * 0.8
-        drawNotch(c, sz: sz, opacity: notchOp)
-    }
-
-    // 3) Smart suppress: terminal tab comes forward → notch stays collapsed
-    private func drawSmartSuppress(_ c: GraphicsContext, sz: CGSize, t: Double) {
+    // 1) Fullscreen: notch visible → screen dims → notch fades → restore
+    private func drawFullscreen(_ c: GraphicsContext, sz: CGSize, t: Double) {
         let cycle = t.truncatingRemainder(dividingBy: 3.5) / 3.5
-        drawScreen(c, sz: sz)
-        // Terminal window sliding forward
-        let termOp = cycle < 0.2 ? 0.0 : cycle < 0.4 ? (cycle - 0.2) / 0.2 : cycle < 0.8 ? 1.0 : 1.0 - (cycle - 0.8) / 0.2
-        let termY = sz.height / 2 + (1.0 - min(1, termOp)) * 5
-        let tw: CGFloat = 28
-        let th: CGFloat = 16
-        let tx = (sz.width - tw) / 2
-        let termRect = CGRect(x: tx, y: termY - 2, width: tw, height: th)
-        c.fill(Path(roundedRect: termRect, cornerRadius: 2),
-               with: .color(Color(white: 0.15).opacity(0.85 * min(1, termOp))))
-        // >_ prompt
-        if termOp > 0.3 {
-            c.fill(Path(CGRect(x: tx + 4, y: termY + 3, width: 6, height: 1.5)),
-                   with: .color(.green.opacity(0.7 * min(1, termOp))))
+        let vis: Double = cycle < 0.3 ? 1.0 :
+            cycle < 0.45 ? 1.0 - (cycle - 0.3) / 0.15 :
+            cycle < 0.7 ? 0.0 :
+            min(1, (cycle - 0.7) / 0.15)
+        // Fullscreen dimming overlay
+        if vis < 0.95 {
+            c.fill(Path(CGRect(origin: .zero, size: sz)),
+                   with: .color(Color(white: 0.08).opacity(0.85 * (1 - vis))))
+            // Fullscreen icon
+            let iconOp = cycle > 0.45 && cycle < 0.65 ?
+                sin((cycle - 0.45) / 0.2 * .pi) * 0.5 : 0
+            if iconOp > 0.01 {
+                c.draw(Text("⛶").font(.system(size: 16)).foregroundColor(.white.opacity(iconOp)),
+                       at: CGPoint(x: sz.width / 2, y: sz.height / 2 + 2))
+            }
         }
-        // Notch stays small (suppressed)
-        drawNotch(c, sz: sz, opacity: 0.5)
+        drawPill(c, sz: sz, w: 28, h: 10, op: vis)
     }
 
-    // 4) Collapse on mouse leave: notch expands → mouse leaves → collapses
-    private func drawCollapseMouseLeave(_ c: GraphicsContext, sz: CGSize, t: Double) {
+    // 2) No session: green dots vanish → notch fades
+    private func drawNoSession(_ c: GraphicsContext, sz: CGSize, t: Double) {
+        let cycle = t.truncatingRemainder(dividingBy: 3.5) / 3.5
+        let dotOp: Double = cycle < 0.25 ? 1.0 :
+            cycle < 0.4 ? 1.0 - (cycle - 0.25) / 0.15 :
+            cycle < 0.7 ? 0.0 :
+            min(1, (cycle - 0.7) / 0.15)
+        let pillOp: Double = cycle < 0.35 ? 1.0 :
+            cycle < 0.55 ? 1.0 - (cycle - 0.35) / 0.2 :
+            cycle < 0.7 ? 0.0 :
+            min(1, (cycle - 0.7) / 0.15)
+
+        drawPill(c, sz: sz, w: 28, h: 10, op: pillOp)
+        // Green session dots
+        if dotOp > 0.01 {
+            let cx = sz.width / 2
+            for i in 0..<2 {
+                let dx: CGFloat = CGFloat(i) * 6 - 3
+                c.fill(Path(ellipseIn: CGRect(x: cx + dx - 1.5, y: 3, width: 3, height: 3)),
+                       with: .color(.green.opacity(0.85 * dotOp * pillOp)))
+            }
+        }
+    }
+
+    // 3) Smart suppress: event flash → notch pulses but stays collapsed → × indicator
+    private func drawSuppress(_ c: GraphicsContext, sz: CGSize, t: Double) {
         let cycle = t.truncatingRemainder(dividingBy: 3.0) / 3.0
-        drawScreen(c, sz: sz)
-        let expanded = cycle > 0.15 && cycle < 0.55
-        let notchOp = 0.8
-        drawNotch(c, sz: sz, opacity: notchOp, expanded: expanded)
+        // Two event pulses
+        let p1 = (cycle > 0.15 && cycle < 0.4) ? sin((cycle - 0.15) / 0.25 * .pi) : 0.0
+        let p2 = (cycle > 0.55 && cycle < 0.75) ? sin((cycle - 0.55) / 0.2 * .pi) : 0.0
+        let pulse = max(p1, p2)
+        let pw = 28 + CGFloat(pulse) * 8
+        let ph: CGFloat = 10 + CGFloat(pulse) * 3
+
+        let flashColor: Color? = pulse > 0.05 ? .green.opacity(0.3 * pulse) : nil
+        drawPill(c, sz: sz, w: pw, h: ph, op: 1.0, flashColor: flashColor)
+
+        // × suppress indicator
+        let xOp1 = (cycle > 0.3 && cycle < 0.48) ? sin((cycle - 0.3) / 0.18 * .pi) : 0.0
+        let xOp2 = (cycle > 0.68 && cycle < 0.82) ? sin((cycle - 0.68) / 0.14 * .pi) : 0.0
+        let xOp = max(xOp1, xOp2)
+        if xOp > 0.01 {
+            c.draw(Text("✕").font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.orange.opacity(0.7 * xOp)),
+                   at: CGPoint(x: sz.width / 2, y: 18))
+        }
+    }
+
+    // 4) Mouse leave: cursor enters → expand → cursor leaves → collapse
+    private func drawMouseLeave(_ c: GraphicsContext, sz: CGSize, t: Double) {
+        let cycle = t.truncatingRemainder(dividingBy: 3.5) / 3.5
+        // Expand amount: 0→1→0
+        let expand: Double = cycle < 0.12 ? 0 :
+            cycle < 0.25 ? (cycle - 0.12) / 0.13 :
+            cycle < 0.5 ? 1.0 :
+            cycle < 0.65 ? 1.0 - (cycle - 0.5) / 0.15 : 0
+
+        let pw = lerp(28, 64, expand)
+        let ph = lerp(10, 34, expand)
+        drawPill(c, sz: sz, w: pw, h: ph, op: 1.0)
+
         // Mouse cursor
-        let cursorX: CGFloat = cycle < 0.1 ? sz.width / 2 :
-            cycle < 0.15 ? sz.width / 2 :
-            cycle < 0.5 ? sz.width / 2 :
-            sz.width / 2 + (cycle - 0.5) / 0.2 * 20
-        let cursorY: CGFloat = cycle < 0.1 ? sz.height / 2 + 10 :
-            cycle < 0.15 ? sz.height / 2 + 10 - (cycle - 0.1) / 0.05 * 12 :
-            cycle < 0.5 ? sz.height / 2 - 2 :
-            sz.height / 2 - 2 + (cycle - 0.5) / 0.2 * 12
-        let cursorOp = cycle < 0.05 ? cycle / 0.05 : cycle > 0.75 ? max(0, 1.0 - (cycle - 0.75) / 0.15) : 1.0
-        // Arrow cursor shape
-        var arrow = Path()
-        arrow.move(to: CGPoint(x: cursorX, y: cursorY))
-        arrow.addLine(to: CGPoint(x: cursorX, y: cursorY + 7))
-        arrow.addLine(to: CGPoint(x: cursorX + 2, y: cursorY + 5))
-        arrow.addLine(to: CGPoint(x: cursorX + 5, y: cursorY + 5))
-        arrow.closeSubpath()
-        c.fill(arrow, with: .color(.white.opacity(0.9 * cursorOp)))
+        let cursorPhase = cycle
+        let cursorVis = cursorPhase > 0.05 && cursorPhase < 0.68
+        if cursorVis {
+            let cx: CGFloat, cy: CGFloat
+            if cursorPhase < 0.12 {
+                // Moving toward notch
+                let t = (cursorPhase - 0.05) / 0.07
+                cx = lerp(sz.width / 2 + 15, sz.width / 2 + 2, t)
+                cy = lerp(sz.height - 5, 8, t)
+            } else if cursorPhase < 0.5 {
+                // Hovering near notch
+                cx = sz.width / 2 + 2
+                cy = lerp(8, 6, expand)
+            } else {
+                // Moving away
+                let t = (cursorPhase - 0.5) / 0.18
+                cx = lerp(sz.width / 2 + 2, sz.width - 2, min(1, t))
+                cy = lerp(6, sz.height - 2, min(1, t))
+            }
+            // Draw cursor arrow
+            var arrow = Path()
+            arrow.move(to: CGPoint(x: cx, y: cy))
+            arrow.addLine(to: CGPoint(x: cx, y: cy + 8))
+            arrow.addLine(to: CGPoint(x: cx + 2.5, y: cy + 6))
+            arrow.addLine(to: CGPoint(x: cx + 5.5, y: cy + 6))
+            arrow.closeSubpath()
+            c.fill(arrow, with: .color(.white.opacity(0.9)))
+            c.stroke(arrow, with: .color(.black.opacity(0.4)), lineWidth: 0.5)
+        }
     }
 }
 

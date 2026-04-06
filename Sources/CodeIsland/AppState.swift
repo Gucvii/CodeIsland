@@ -238,7 +238,24 @@ final class AppState {
         }
     }
 
+    private func shouldSuppressAutoExpand(for sessionId: String) -> Bool {
+        guard UserDefaults.standard.bool(forKey: SettingsKey.smartSuppress) else { return false }
+        guard let session = sessions[sessionId],
+              let termApp = session.termApp else { return false }
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return false }
+        let frontName = frontApp.localizedName?.lowercased() ?? ""
+        let bundleId = frontApp.bundleIdentifier?.lowercased() ?? ""
+        let term = termApp.lowercased()
+            .replacingOccurrences(of: ".app", with: "")
+            .replacingOccurrences(of: "apple_", with: "")
+        let normalizedFront = frontName.replacingOccurrences(of: ".app", with: "")
+        return normalizedFront.contains(term) || term.contains(normalizedFront) || bundleId.contains(term)
+    }
+
     private func showCompletion(_ sessionId: String) {
+        // Smart suppress: don't show completion card if user is looking at the terminal
+        if shouldSuppressAutoExpand(for: sessionId) { return }
+
         activeSessionId = sessionId
         surface = .completionCard(sessionId: sessionId)
         completionHasBeenEntered = false

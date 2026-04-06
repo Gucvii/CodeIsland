@@ -407,16 +407,15 @@ struct ConfigInstaller {
                 return hookList.contains { ($0["command"] as? String) == hookCommand }
             }
         }
-        if alreadyInstalled { return true }
+        if alreadyInstalled && !hasStaleAsyncKey(hooks) { return true }
 
         for (event, timeout, isAsync) in cli.events {
             var eventHooks = hooks[event] as? [[String: Any]] ?? []
             eventHooks.removeAll { containsOurHook($0) }
 
-            var hookEntry: [String: Any] = [
+            let hookEntry: [String: Any] = [
                 "type": "command", "command": hookCommand, "timeout": timeout,
             ]
-            if isAsync { hookEntry["async"] = true }
             eventHooks.append(["matcher": "", "hooks": [hookEntry]])
             hooks[event] = eventHooks
         }
@@ -494,10 +493,26 @@ struct ConfigInstaller {
     private static func isHooksInstalled(for cli: CLIConfig, fm: FileManager) -> Bool {
         guard let root = parseJSONFile(at: cli.fullPath, fm: fm),
               let hooks = root[cli.configKey] as? [String: Any] else { return false }
-        return hooks.values.contains { value in
+        let hasHook = hooks.values.contains { value in
             guard let entries = value as? [[String: Any]] else { return false }
             return entries.contains { containsOurHook($0) }
         }
+        // Also check for stale "async" keys that need cleanup
+        if hasHook && hasStaleAsyncKey(hooks) { return false }
+        return hasHook
+    }
+
+    /// Detect legacy hook entries with invalid "async" key
+    private static func hasStaleAsyncKey(_ hooks: [String: Any]) -> Bool {
+        for (_, value) in hooks {
+            guard let entries = value as? [[String: Any]] else { continue }
+            for entry in entries where containsOurHook(entry) {
+                if let hookList = entry["hooks"] as? [[String: Any]] {
+                    if hookList.contains(where: { $0["async"] != nil }) { return true }
+                }
+            }
+        }
+        return false
     }
 
     /// Check if a hook entry contains our hook command

@@ -284,11 +284,11 @@ private struct NotchIconButton: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(tint.opacity(hovering ? 1.0 : 0.7))
+                .foregroundStyle(tint.opacity(hovering ? 1.0 : 0.85))
                 .frame(width: 22, height: 22)
                 .background(
                     Circle()
-                        .fill(tint.opacity(hovering ? 0.18 : 0))
+                        .fill(tint.opacity(hovering ? 0.2 : 0.08))
                 )
                 .contentShape(Circle())
         }
@@ -710,6 +710,7 @@ private struct SessionListView: View {
     /// When set, only show this session (auto-expand on completion)
     var onlySessionId: String? = nil
     @AppStorage(SettingsKey.sessionGroupingMode) private var groupingMode = SettingsDefaults.sessionGroupingMode
+    @AppStorage(SettingsKey.maxVisibleSessions) private var maxVisibleSessions = SettingsDefaults.maxVisibleSessions
 
     private var groupedSessions: [(header: String, source: String?, ids: [String])] {
         if let only = onlySessionId, appState.sessions[only] != nil {
@@ -772,8 +773,16 @@ private struct SessionListView: View {
         }
     }
 
+    private var totalSessionCount: Int {
+        groupedSessions.reduce(0) { $0 + $1.ids.count }
+    }
+
+    private var needsScroll: Bool {
+        onlySessionId == nil && totalSessionCount > maxVisibleSessions
+    }
+
     var body: some View {
-        VStack(spacing: 6) {
+        let content = VStack(spacing: 6) {
             ForEach(groupedSessions, id: \.header) { group in
                 if !group.header.isEmpty {
                     HStack(spacing: 6) {
@@ -796,15 +805,17 @@ private struct SessionListView: View {
                     if let session = appState.sessions[sessionId] {
                         let hasDuplicate = appState.sessions.contains { $0.key != sessionId && $0.value.displayName == session.displayName }
                         let isStale = session.status == .idle && session.lastActivity.timeIntervalSinceNow < -900
-                        if isStale {
-                            CollapsedSessionRow(session: session, sessionId: sessionId)
-                        } else {
-                            SessionCard(
-                                sessionId: sessionId,
-                                session: session,
-                                showIdSuffix: hasDuplicate,
-                                isCompletion: onlySessionId != nil
-                            )
+                        Group {
+                            if isStale {
+                                CollapsedSessionRow(session: session, sessionId: sessionId)
+                            } else {
+                                SessionCard(
+                                    sessionId: sessionId,
+                                    session: session,
+                                    showIdSuffix: hasDuplicate,
+                                    isCompletion: onlySessionId != nil
+                                )
+                            }
                         }
                     }
                 }
@@ -821,6 +832,57 @@ private struct SessionListView: View {
             }
         }
         .padding(.vertical, 4)
+
+        if needsScroll {
+            ThinScrollView(maxHeight: CGFloat(maxVisibleSessions) * 90) {
+                content
+            }
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0, bottomLeadingRadius: 20,
+                    bottomTrailingRadius: 20, topTrailingRadius: 0,
+                    style: .continuous
+                )
+            )
+        } else {
+            content
+        }
+    }
+}
+
+/// Thin overlay scrollbar via NSScrollView — ignores system "show scrollbar" preference.
+private struct ThinScrollView<Content: View>: NSViewRepresentable {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: Content
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScroller?.controlSize = .mini
+        scrollView.drawsBackground = false
+        scrollView.scrollerKnobStyle = .light
+
+        let hosting = NSHostingView(rootView: content)
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = hosting
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            hosting.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: maxHeight),
+        ])
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        if let hosting = scrollView.documentView as? NSHostingView<Content> {
+            hosting.rootView = content
+        }
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScroller?.controlSize = .mini
     }
 }
 
@@ -1508,7 +1570,7 @@ private struct TypingIndicator: View {
 
 // MARK: - Mini Agent Icon (8-bit robot head)
 
-private struct MiniAgentIcon: View {
+struct MiniAgentIcon: View {
     let active: Bool
     var size: CGFloat = 12
 

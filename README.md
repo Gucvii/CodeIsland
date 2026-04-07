@@ -53,11 +53,18 @@ It connects to **8 AI coding tools** via Unix socket IPC, displaying session sta
 
 ## Installation
 
-### Download (Recommended)
+### Homebrew (Recommended)
+
+```bash
+brew tap wxtsky/tap
+brew install --cask codeisland
+```
+
+### Manual Download
 
 1. Go to [Releases](https://github.com/wxtsky/CodeIsland/releases)
-2. Download `CodeIsland.app.zip`
-3. Unzip and drag `CodeIsland.app` to your Applications folder
+2. Download `CodeIsland.dmg`
+3. Open the DMG and drag `CodeIsland.app` to your Applications folder
 4. Launch CodeIsland — it will automatically install hooks for all detected AI tools
 
 > **Note:** On first launch, macOS may show a security warning. Go to **System Settings → Privacy & Security** and click **Open Anyway**.

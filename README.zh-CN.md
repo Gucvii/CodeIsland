@@ -116,11 +116,11 @@ CodeIsland 提供 7 个标签页的设置面板：
 
 ## Star History
 
-<a href="https://star-history.com/#wxtsky/CodeIsland&Date">
+<a href="https://www.star-history.com/?repos=wxtsky%2FCodeIsland&type=date&legend=bottom-right">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=wxtsky/CodeIsland&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=wxtsky/CodeIsland&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=wxtsky/CodeIsland&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wxtsky/CodeIsland&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wxtsky/CodeIsland&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wxtsky/CodeIsland&type=date&legend=top-left" />
  </picture>
 </a>
 

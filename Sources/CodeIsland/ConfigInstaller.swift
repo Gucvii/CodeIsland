@@ -160,14 +160,17 @@ struct ConfigInstaller {
     }
 
     /// Hook script version — bump this when the script template changes
-    private static let hookScriptVersion = 2
+    private static let hookScriptVersion = 3
 
     /// Hook script for Claude Code (dispatcher: bridge binary → nc fallback)
     private static let hookScript = """
         #!/bin/bash
         # CodeIsland hook v\(hookScriptVersion) — native bridge with shell fallback
         BRIDGE="$HOME/.claude/hooks/codeisland-bridge"
-        [ -x "$BRIDGE" ] && exec "$BRIDGE"
+        if [ -x "$BRIDGE" ]; then
+          "$BRIDGE" "$@"
+          exit $?
+        fi
         # Fallback: original shell approach (no binary installed yet)
         SOCK="/tmp/codeisland-$(id -u).sock"
         [ -S "$SOCK" ] || exit 0
@@ -571,12 +574,22 @@ struct ConfigInstaller {
             try? fm.removeItem(atPath: tmpPath)
             try fm.copyItem(atPath: srcPath, toPath: tmpPath)
             chmod(tmpPath, 0o755)
+            // Strip quarantine xattr so Gatekeeper won't block the binary
+            stripQuarantine(tmpPath)
             _ = try fm.replaceItemAt(URL(fileURLWithPath: bridgePath), withItemAt: URL(fileURLWithPath: tmpPath))
         } catch {
             // replaceItemAt fails if destination doesn't exist yet — fall back to rename
             try? fm.moveItem(atPath: tmpPath, toPath: bridgePath)
             chmod(bridgePath, 0o755)
         }
+        // Ensure final binary is free of quarantine (covers both paths above)
+        stripQuarantine(bridgePath)
+    }
+
+    /// Remove com.apple.quarantine xattr so Gatekeeper won't block the binary.
+    /// Copied binaries inherit quarantine from the source app bundle.
+    private static func stripQuarantine(_ path: String) {
+        removexattr(path, "com.apple.quarantine", 0)
     }
 
     // MARK: - OpenCode Plugin

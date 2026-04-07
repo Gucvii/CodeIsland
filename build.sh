@@ -51,5 +51,9 @@ for bundle in .build/*/release/*.bundle; do
     fi
 done
 
+echo "Ad-hoc code signing..."
+codesign --force --sign - "$APP_BUNDLE/Contents/Helpers/codeisland-bridge"
+codesign --force --sign - "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+
 echo "Done: $APP_BUNDLE"
 echo "Run: open $APP_BUNDLE"

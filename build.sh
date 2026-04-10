@@ -92,6 +92,17 @@ if [[ "$*" == *"--notarize"* ]] && [[ "$SIGN_ID" == *"Developer ID"* ]]; then
     fi
     rm -f "$ZIP_PATH"
 
+    echo "Notarizing DMG..."
+    if xcrun notarytool submit "$DMG_PATH" --keychain-profile "CodeIsland" --wait 2>&1 | tee /dev/stderr | grep -q "status: Accepted"; then
+        xcrun stapler staple "$DMG_PATH"
+        echo "DMG notarized and ready: $DMG_PATH"
+    else
+        echo "WARNING: DMG notarization failed, but app is notarized."
+    fi
+fi
+
+# Create DMG if create-dmg is available (needed for distribution via Homebrew)
+if command -v create-dmg &> /dev/null; then
     echo "Creating DMG..."
     DMG_PATH="$BUILD_DIR/$APP_NAME.dmg"
     rm -f "$DMG_PATH"
@@ -104,13 +115,31 @@ if [[ "$*" == *"--notarize"* ]] && [[ "$SIGN_ID" == *"Developer ID"* ]]; then
         --app-drop-link 450 185 \
         --no-internet-enable \
         "$DMG_PATH" "$APP_BUNDLE"
-
-    # Sign and notarize the DMG too
     codesign --force --sign "$SIGN_ID" "$DMG_PATH"
+    echo "DMG ready: $DMG_PATH"
+fi
+
+# Notarize if using Developer ID and --notarize flag is passed
+if [[ "$*" == *"--notarize"* ]] && [[ "$SIGN_ID" == *"Developer ID"* ]]; then
+    echo "Creating ZIP for notarization..."
+    ZIP_PATH="$BUILD_DIR/$APP_NAME.zip"
+    ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+
+    echo "Submitting for notarization..."
+    if xcrun notarytool submit "$ZIP_PATH" --keychain-profile "CodeIsland" --wait 2>&1 | tee /dev/stderr | grep -q "status: Accepted"; then
+        echo "Stapling notarization ticket..."
+        xcrun stapler staple "$APP_BUNDLE"
+    else
+        echo "ERROR: Notarization failed. Run 'xcrun notarytool log <submission-id> --keychain-profile CodeIsland' for details."
+        rm -f "$ZIP_PATH"
+        exit 1
+    fi
+    rm -f "$ZIP_PATH"
+
     echo "Notarizing DMG..."
     if xcrun notarytool submit "$DMG_PATH" --keychain-profile "CodeIsland" --wait 2>&1 | tee /dev/stderr | grep -q "status: Accepted"; then
         xcrun stapler staple "$DMG_PATH"
-        echo "DMG ready: $DMG_PATH"
+        echo "DMG notarized and ready: $DMG_PATH"
     else
         echo "WARNING: DMG notarization failed, but app is notarized."
     fi

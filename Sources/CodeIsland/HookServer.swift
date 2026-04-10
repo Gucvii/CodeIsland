@@ -5,11 +5,89 @@ import CodeIslandCore
 
 private let log = Logger(subsystem: "com.codeisland", category: "HookServer")
 
+/// Actor that holds pending socket connections for blocking permission and question requests.
+/// Isolating these connections on a dedicated actor prevents the @MainActor queue from stalling
+/// while waiting for user interaction, allowing concurrent requests to be processed in parallel.
+actor PermissionResponder {
+    struct Pending {
+        let connection: NWConnection
+        let event: HookEvent
+    }
+
+    private var permissions: [String: Pending] = [:]
+    private var questions: [String: Pending] = [:]
+
+    func storePermission(id: String, connection: NWConnection, event: HookEvent) {
+        permissions[id] = Pending(connection: connection, event: event)
+    }
+
+    func storeQuestion(id: String, connection: NWConnection, event: HookEvent) {
+        questions[id] = Pending(connection: connection, event: event)
+    }
+
+    /// Respond to a pending permission and close its connection.
+    /// Returns true if the request existed and was handled.
+    func respondToPermission(id: String, data: Data) -> Bool {
+        guard let pending = permissions.removeValue(forKey: id) else { return false }
+        sendResponse(connection: pending.connection, data: data)
+        return true
+    }
+
+    /// Respond to a pending question and close its connection.
+    /// Returns true if the request existed and was handled.
+    func respondToQuestion(id: String, data: Data) -> Bool {
+        guard let pending = questions.removeValue(forKey: id) else { return false }
+        sendResponse(connection: pending.connection, data: data)
+        return true
+    }
+
+    /// Cancel a specific pending permission by id.
+    /// Returns true if it existed and was cancelled.
+    @discardableResult
+    func cancelPermission(id: String) -> Bool {
+        guard let pending = permissions.removeValue(forKey: id) else { return false }
+        pending.connection.cancel()
+        return true
+    }
+
+    /// Cancel a specific pending question by id.
+    /// Returns true if it existed and was cancelled.
+    @discardableResult
+    func cancelQuestion(id: String) -> Bool {
+        guard let pending = questions.removeValue(forKey: id) else { return false }
+        pending.connection.cancel()
+        return true
+    }
+
+    /// Cancel all pending permissions and questions for a session.
+    /// Returns the ids that were cancelled.
+    func cancelPending(forSession sessionId: String) -> (permissionIds: [String], questionIds: [String]) {
+        let permissionMatches = permissions.filter { $0.value.event.sessionId == sessionId }
+        permissionMatches.keys.forEach { id in
+            permissions.removeValue(forKey: id)?.connection.cancel()
+        }
+
+        let questionMatches = questions.filter { $0.value.event.sessionId == sessionId }
+        questionMatches.keys.forEach { id in
+            questions.removeValue(forKey: id)?.connection.cancel()
+        }
+
+        return (Array(permissionMatches.keys), Array(questionMatches.keys))
+    }
+
+    private func sendResponse(connection: NWConnection, data: Data) {
+        connection.send(content: data, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+}
+
 @MainActor
 class HookServer {
     private let appState: AppState
     nonisolated static var socketPath: String { SocketPath.path }
     private var listener: NWListener?
+    private let responder = PermissionResponder()
 
     init(appState: AppState) {
         self.appState = appState
@@ -56,6 +134,33 @@ class HookServer {
         listener?.cancel()
         listener = nil
         unlink(HookServer.socketPath)
+    }
+
+    /// Deliver a permission response to the waiting bridge connection.
+    func respondToPermission(id: String, data: Data) {
+        Task {
+            let handled = await responder.respondToPermission(id: id, data: data)
+            if !handled {
+                log.warning("Permission response for id \(id) had no pending connection")
+            }
+        }
+    }
+
+    /// Deliver a question response to the waiting bridge connection.
+    func respondToQuestion(id: String, data: Data) {
+        Task {
+            let handled = await responder.respondToQuestion(id: id, data: data)
+            if !handled {
+                log.warning("Question response for id \(id) had no pending connection")
+            }
+        }
+    }
+
+    /// Cancel all pending requests for a session (used when peer disconnects).
+    func cancelPending(forSession sessionId: String) {
+        Task {
+            await responder.cancelPending(forSession: sessionId)
+        }
     }
 
     private func handleConnection(_ connection: NWConnection) {
@@ -125,49 +230,45 @@ class HookServer {
                 return
             }
 
+            let requestId = UUID().uuidString
+
             // AskUserQuestion is a question, not a permission — route to QuestionBar
             if event.toolName == "AskUserQuestion" {
-                monitorPeerDisconnect(connection: connection, sessionId: sessionId)
                 Task {
-                    let responseBody = await withCheckedContinuation { continuation in
-                        appState.handleAskUserQuestion(event, continuation: continuation)
-                    }
-                    self.sendResponse(connection: connection, data: responseBody)
+                    await responder.storeQuestion(id: requestId, connection: connection, event: event)
                 }
+                monitorPeerDisconnect(connection: connection, sessionId: sessionId, requestId: requestId, kind: .askUserQuestion)
+                appState.handleAskUserQuestion(event, id: requestId)
                 return
             }
-            monitorPeerDisconnect(connection: connection, sessionId: sessionId)
+
+            // Store connection on the responder actor immediately so the bridge
+            // stays alive, then queue it for UI on the main actor.
             Task {
-                let responseBody = await withCheckedContinuation { continuation in
-                    appState.handlePermissionRequest(event, continuation: continuation)
-                }
-                self.sendResponse(connection: connection, data: responseBody)
+                await responder.storePermission(id: requestId, connection: connection, event: event)
             }
+            monitorPeerDisconnect(connection: connection, sessionId: sessionId, requestId: requestId, kind: .permission)
+            appState.handlePermissionRequest(event, id: requestId)
         } else if EventNormalizer.normalize(event.eventName) == "Notification",
                   QuestionPayload.from(event: event) != nil {
             let questionSessionId = event.sessionId ?? "default"
-            monitorPeerDisconnect(connection: connection, sessionId: questionSessionId)
+            let requestId = UUID().uuidString
             Task {
-                let responseBody = await withCheckedContinuation { continuation in
-                    appState.handleQuestion(event, continuation: continuation)
-                }
-                self.sendResponse(connection: connection, data: responseBody)
+                await responder.storeQuestion(id: requestId, connection: connection, event: event)
             }
+            monitorPeerDisconnect(connection: connection, sessionId: questionSessionId, requestId: requestId, kind: .question)
+            appState.handleQuestion(event, id: requestId)
         } else {
             appState.handleEvent(event)
             sendResponse(connection: connection, data: Data("{}".utf8))
         }
     }
 
-    /// Per-connection state used by the disconnect monitor.
-    /// `responded` flips to true once we've sent the response, so our own
-    /// `connection.cancel()` inside `sendResponse` does not masquerade as a
-    /// peer disconnect.
-    private final class ConnectionContext {
-        var responded: Bool = false
+    private enum RequestKind {
+        case permission
+        case question
+        case askUserQuestion
     }
-
-    private var connectionContexts: [ObjectIdentifier: ConnectionContext] = [:]
 
     /// Watch for bridge process disconnect — indicates the bridge process actually died
     /// (e.g. user Ctrl-C'd Claude Code), NOT a normal half-close.
@@ -178,19 +279,16 @@ class HookServer {
     /// That caused every PermissionRequest to be auto-drained as `deny` before the UI
     /// card was even visible. We now rely on `stateUpdateHandler` transitioning to
     /// `cancelled`/`failed` — which only happens on real socket teardown, not half-close.
-    private func monitorPeerDisconnect(connection: NWConnection, sessionId: String) {
-        let context = ConnectionContext()
-        connectionContexts[ObjectIdentifier(connection)] = context
-
+    private func monitorPeerDisconnect(connection: NWConnection, sessionId: String, requestId: String, kind: RequestKind) {
         connection.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
                 guard let self = self else { return }
                 switch state {
                 case .cancelled, .failed:
-                    if !context.responded {
+                    let wasPending = await self.removePending(requestId: requestId, kind: kind)
+                    if wasPending {
                         self.appState.handlePeerDisconnect(sessionId: sessionId)
                     }
-                    self.connectionContexts.removeValue(forKey: ObjectIdentifier(connection))
                 default:
                     break
                 }
@@ -198,11 +296,16 @@ class HookServer {
         }
     }
 
-    private func sendResponse(connection: NWConnection, data: Data) {
-        // Mark as responded BEFORE cancel() so the disconnect monitor ignores our own teardown.
-        if let context = connectionContexts[ObjectIdentifier(connection)] {
-            context.responded = true
+    private func removePending(requestId: String, kind: RequestKind) async -> Bool {
+        switch kind {
+        case .permission:
+            return await responder.cancelPermission(id: requestId)
+        case .question, .askUserQuestion:
+            return await responder.cancelQuestion(id: requestId)
         }
+    }
+
+    private func sendResponse(connection: NWConnection, data: Data) {
         connection.send(content: data, completion: .contentProcessed { _ in
             connection.cancel()
         })

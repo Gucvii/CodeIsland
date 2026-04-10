@@ -26,6 +26,7 @@ final class AppState {
     /// Preview-only: mock question payload for DebugHarness (no continuation needed)
     var previewQuestionPayload: QuestionPayload?
     var surface: IslandSurface = .collapsed
+    weak var hookServer: HookServer?
 
     var justCompletedSessionId: String? {
         if case .completionCard(let id) = surface { return id }
@@ -335,11 +336,11 @@ final class AppState {
         processMonitors.removeValue(forKey: sessionId)
     }
 
-    /// Remove a session, clean up its monitor, and resume any pending continuations.
+    /// Remove a session, clean up its monitor, and deny any pending requests.
     /// Every removal path (cleanup timer, process exit, reducer effect) goes through here
-    /// so leaked continuations / connections are impossible.
+    /// so leaked requests / connections are impossible.
     private func removeSession(_ sessionId: String) {
-        // Resume ALL pending continuations for this session
+        // Deny ALL pending permissions and questions for this session
         drainPermissions(forSession: sessionId)
         drainQuestions(forSession: sessionId)
 
@@ -774,7 +775,7 @@ final class AppState {
         }
     }
 
-    func handlePermissionRequest(_ event: HookEvent, continuation: CheckedContinuation<Data, Never>) {
+    func handlePermissionRequest(_ event: HookEvent, id: String) {
         let sessionId = event.sessionId ?? "default"
         if sessions[sessionId] == nil {
             sessions[sessionId] = SessionSnapshot()
@@ -791,7 +792,7 @@ final class AppState {
         sessions[sessionId]?.toolDescription = event.toolDescription
         sessions[sessionId]?.lastActivity = Date()
 
-        let request = PermissionRequest(event: event, continuation: continuation)
+        let request = PermissionRequest(id: id, event: event)
         permissionQueue.append(request)
 
         // Show UI only if this is the first (or only) queued item
@@ -828,7 +829,7 @@ final class AppState {
             let response = #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
             responseData = Data(response.utf8)
         }
-        pending.continuation.resume(returning: responseData)
+        hookServer?.respondToPermission(id: pending.id, data: responseData)
         let sessionId = pending.event.sessionId ?? "default"
         sessions[sessionId]?.status = .running
 
@@ -840,7 +841,7 @@ final class AppState {
         guard !permissionQueue.isEmpty else { return }
         let pending = permissionQueue.removeFirst()
         let response = #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#
-        pending.continuation.resume(returning: Data(response.utf8))
+        hookServer?.respondToPermission(id: pending.id, data: Data(response.utf8))
         let sessionId = pending.event.sessionId ?? "default"
         sessions[sessionId]?.status = .idle
         sessions[sessionId]?.currentTool = nil
@@ -854,7 +855,7 @@ final class AppState {
         refreshDerivedState()
     }
 
-    func handleQuestion(_ event: HookEvent, continuation: CheckedContinuation<Data, Never>) {
+    func handleQuestion(_ event: HookEvent, id: String) {
         let sessionId = event.sessionId ?? "default"
         if sessions[sessionId] == nil {
             sessions[sessionId] = SessionSnapshot()
@@ -863,7 +864,7 @@ final class AppState {
         tryMonitorSession(sessionId)
 
         guard let question = QuestionPayload.from(event: event) else {
-            continuation.resume(returning: Data("{}".utf8))
+            hookServer?.respondToQuestion(id: id, data: Data("{}".utf8))
             return
         }
         drainPermissions(forSession: sessionId)
@@ -871,7 +872,7 @@ final class AppState {
         sessions[sessionId]?.status = .waitingQuestion
         sessions[sessionId]?.lastActivity = Date()
 
-        let request = QuestionRequest(event: event, question: question, continuation: continuation)
+        let request = QuestionRequest(id: id, event: event, question: question)
         questionQueue.append(request)
 
         if questionQueue.count == 1 {
@@ -884,7 +885,7 @@ final class AppState {
         refreshDerivedState()
     }
 
-    func handleAskUserQuestion(_ event: HookEvent, continuation: CheckedContinuation<Data, Never>) {
+    func handleAskUserQuestion(_ event: HookEvent, id: String) {
         let sessionId = event.sessionId ?? "default"
         if sessions[sessionId] == nil {
             sessions[sessionId] = SessionSnapshot()
@@ -921,7 +922,7 @@ final class AppState {
         sessions[sessionId]?.status = .waitingQuestion
         sessions[sessionId]?.lastActivity = Date()
 
-        let request = QuestionRequest(event: event, question: payload, continuation: continuation, isFromPermission: true)
+        let request = QuestionRequest(id: id, event: event, question: payload, isFromPermission: true)
         questionQueue.append(request)
 
         if questionQueue.count == 1 {
@@ -961,7 +962,7 @@ final class AppState {
             ]
             responseData = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
         }
-        pending.continuation.resume(returning: responseData)
+        hookServer?.respondToQuestion(id: pending.id, data: responseData)
         let sessionId = pending.event.sessionId ?? "default"
         sessions[sessionId]?.status = .processing
 
@@ -978,7 +979,7 @@ final class AppState {
         } else {
             responseData = Data(#"{"hookSpecificOutput":{"hookEventName":"Notification"}}"#.utf8)
         }
-        pending.continuation.resume(returning: responseData)
+        hookServer?.respondToQuestion(id: pending.id, data: responseData)
         let sessionId = pending.event.sessionId ?? "default"
         sessions[sessionId]?.status = .processing
 
@@ -986,12 +987,12 @@ final class AppState {
         refreshDerivedState()
     }
 
-    /// Drain all queued permissions for a specific session, resuming their continuations with deny
+    /// Drain all queued permissions for a specific session, sending deny responses.
     private func drainPermissions(forSession sessionId: String) {
         let denyResponse = Data(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#.utf8)
         permissionQueue.removeAll { item in
             guard item.event.sessionId == sessionId else { return false }
-            item.continuation.resume(returning: denyResponse)
+            hookServer?.respondToPermission(id: item.id, data: denyResponse)
             return true
         }
     }
@@ -1004,6 +1005,7 @@ final class AppState {
 
         drainQuestions(forSession: sessionId)
         drainPermissions(forSession: sessionId)
+        hookServer?.cancelPending(forSession: sessionId)
         let currentStatus = sessions[sessionId]?.status
         if currentStatus == .waitingApproval || currentStatus == .waitingQuestion {
             sessions[sessionId]?.status = .processing
@@ -1014,11 +1016,11 @@ final class AppState {
         refreshDerivedState()
     }
 
-    /// Drain all queued questions for a specific session, resuming their continuations with empty
+    /// Drain all queued questions for a specific session, sending empty responses.
     private func drainQuestions(forSession sessionId: String) {
         questionQueue.removeAll { item in
             guard item.event.sessionId == sessionId else { return false }
-            item.continuation.resume(returning: Data("{}".utf8))
+            hookServer?.respondToQuestion(id: item.id, data: Data("{}".utf8))
             return true
         }
     }

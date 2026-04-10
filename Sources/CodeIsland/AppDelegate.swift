@@ -25,6 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // immediately but the socket isn't listening yet — PermissionRequest
         // hooks get no response and Claude Code denies them.
         hookServer = HookServer(appState: appState)
+        appState.hookServer = hookServer
         hookServer?.start()
 
         if ConfigInstaller.install() {

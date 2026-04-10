@@ -20,6 +20,8 @@ jobs:
 
       - name: Build universal binary and app bundle
         run: ./build.sh
+        env:
+          SIGN_ID: "-"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

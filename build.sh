@@ -67,8 +67,13 @@ if [ -z "$SIGN_ID" ]; then
 fi
 
 echo "Code signing ($SIGN_ID)..."
-codesign --force --options runtime --sign "$SIGN_ID" "$APP_BUNDLE/Contents/Helpers/codeisland-bridge"
-codesign --force --options runtime --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
+if [ "$SIGN_ID" = "-" ]; then
+    codesign --force --sign "$SIGN_ID" "$APP_BUNDLE/Contents/Helpers/codeisland-bridge"
+    codesign --force --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
+else
+    codesign --force --options runtime --sign "$SIGN_ID" "$APP_BUNDLE/Contents/Helpers/codeisland-bridge"
+    codesign --force --options runtime --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
+fi
 
 # Notarize if using Developer ID and --notarize flag is passed
 if [[ "$*" == *"--notarize"* ]] && [[ "$SIGN_ID" == *"Developer ID"* ]]; then

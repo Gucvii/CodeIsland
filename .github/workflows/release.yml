@@ -5,57 +5,50 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  update-homebrew:
-    runs-on: ubuntu-latest
+  build-and-upload:
+    name: Build and upload DMG
+    runs-on: macos-15
+    env:
+      BUILD_ARCH: arm64
+      SKIP_SIGN: "1"
+      SKIP_NOTARIZE: "1"
+
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Extract version from tag
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
-      - name: Download DMG from release
+      - name: Select Xcode 26
         run: |
-          curl -L \
-            "https://github.com/Gucvii/CodeIsland/releases/download/v${VERSION}/CodeIsland.dmg" \
-            -o CodeIsland.dmg
+          XCODE_APP="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -type d | sort | tail -n 1)"
+          if [ -z "$XCODE_APP" ]; then
+            echo "Xcode 26 is required to compile AppIcon.icon"
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
 
-      - name: Compute SHA256
-        run: echo "SHA256=$(sha256sum CodeIsland.dmg | awk '{print $1}')" >> $GITHUB_ENV
-
-      - name: Clone homebrew-tap
+      - name: Show build environment
         run: |
-          git clone "https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/Gucvii/homebrew-tap.git" homebrew-tap
+          sw_vers
+          xcodebuild -version
+          uname -m
 
-      - name: Update Cask formula
+      - name: Install DMG tooling
         run: |
-          mkdir -p homebrew-tap/Casks
-          cat > homebrew-tap/Casks/codeisland.rb <<'CASK_EOF'
-          cask "codeisland" do
-            version "VERSION_PLACEHOLDER"
-            sha256 "SHA256_PLACEHOLDER"
+          if ! command -v create-dmg >/dev/null 2>&1; then
+            brew install create-dmg
+          fi
 
-            url "https://github.com/Gucvii/CodeIsland/releases/download/v#{version}/CodeIsland.dmg"
-            name "CodeIsland"
-            desc "Menu bar companion for Claude Code, Codex, Gemini CLI and more"
-            homepage "https://github.com/Gucvii/CodeIsland"
+      - name: Build DMG
+        run: ./scripts/build-dmg.sh "$VERSION"
 
-            app "CodeIsland.app"
-
-            zap trash: [
-              "~/.codeisland",
-            ]
-          end
-          CASK_EOF
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" homebrew-tap/Casks/codeisland.rb
-          sed -i "s/SHA256_PLACEHOLDER/${SHA256}/" homebrew-tap/Casks/codeisland.rb
-          sed -i 's/^          //' homebrew-tap/Casks/codeisland.rb
-
-      - name: Commit and push to homebrew-tap
+      - name: Upload DMG to release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd homebrew-tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/codeisland.rb
-          git commit -m "Update codeisland to ${VERSION}"
-          git push
+          gh release upload "$GITHUB_REF_NAME" .build/CodeIsland.dmg --clobber

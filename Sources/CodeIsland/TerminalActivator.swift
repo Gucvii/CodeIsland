@@ -1,5 +1,10 @@
 import AppKit
 import CodeIslandCore
+import os.log
+
+extension Logger {
+    fileprivate static let activator = Logger(subsystem: "com.codeisland", category: "TerminalActivator")
+}
 
 /// Activates the terminal window/tab running a specific Claude Code session.
 /// Supports tab-level switching for: Ghostty, iTerm2, Terminal.app, WezTerm, Kaku, kitty.
@@ -676,7 +681,7 @@ struct TerminalActivator {
         }
     }
 
-    // MARK: - Kaku (CLI: kaku cli list + activate-tab, same interface as WezTerm)
+    // MARK: - Kaku (CLI: kaku cli list + activate-pane, same interface as WezTerm)
 
     /// Activate a Kaku tab by matching TTY or CWD from `kaku cli list --format json`.
     /// Mirrors the WezTerm approach since Kaku is a WezTerm fork with an identical CLI.
@@ -685,27 +690,45 @@ struct TerminalActivator {
         guard let bin = findBinary("kaku", extraPaths: [
             "/Applications/Kaku.app/Contents/MacOS/kaku",
             NSHomeDirectory() + "/Applications/Kaku.app/Contents/MacOS/kaku",
-        ]) else { return }
+        ]) else {
+            Logger.activator.debug("activateKaku: kaku binary not found")
+            return
+        }
+        Logger.activator.debug("activateKaku: found binary at \(bin, privacy: .public)")
+
         DispatchQueue.global(qos: .userInitiated).async {
             guard let json = runProcess(bin, args: ["cli", "list", "--format", "json"]),
-                  let panes = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else { return }
-
-            // Find tab: prefer TTY match, fallback to CWD
-            var tabId: Int?
-            if let tty = ttyPath {
-                tabId = panes.first(where: { ($0["tty_name"] as? String) == tty })?["tab_id"] as? Int
+                  let panes = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else {
+                Logger.activator.debug("activateKaku: kaku cli list failed or no data")
+                return
             }
-            if tabId == nil, let cwd = cwd {
+            Logger.activator.debug("activateKaku: got \(panes.count) panes from kaku cli list")
+
+            // Find pane: prefer TTY match, fallback to CWD
+            var paneId: Int?
+            if let tty = ttyPath {
+                paneId = panes.first(where: { ($0["tty_name"] as? String) == tty })?["pane_id"] as? Int
+                let paneIdStr = paneId.map(String.init) ?? "nil"
+                Logger.activator.debug("activateKaku: TTY match tty=\(tty, privacy: .public) paneId=\(paneIdStr, privacy: .public)")
+            }
+            if paneId == nil, let cwd = cwd {
                 let cwdUrl = "file://" + cwd
-                tabId = panes.first(where: {
+                paneId = panes.first(where: {
                     guard let paneCwd = $0["cwd"] as? String else { return false }
                     return paneCwd == cwdUrl || paneCwd == cwd
-                })?["tab_id"] as? Int
+                })?["pane_id"] as? Int
+                let paneIdStr = paneId.map(String.init) ?? "nil"
+                Logger.activator.debug("activateKaku: CWD match cwd=\(cwd, privacy: .public) paneId=\(paneIdStr, privacy: .public)")
             }
 
-            if let id = tabId {
-                _ = runProcess(bin, args: ["cli", "activate-tab", "--tab-id", "\(id)"])
+            guard let id = paneId else {
+                Logger.activator.debug("activateKaku: no matching pane found")
+                return
             }
+
+            Logger.activator.debug("activateKaku: activating pane \(id, privacy: .public)")
+            _ = runProcess(bin, args: ["cli", "activate-pane", "--pane-id", "\(id)"])
+            Logger.activator.debug("activateKaku: activate-pane command sent")
         }
     }
 

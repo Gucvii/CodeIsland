@@ -93,6 +93,9 @@ struct TerminalVisibilityDetector {
         if bid.contains("wezterm") {
             return isWezTermTabActive(session)
         }
+        if bid == "fun.tw93.kaku" {
+            return isKakuTabActive(session)
+        }
         if bid.contains("kitty") {
             return isKittyWindowActive(session)
         }
@@ -105,6 +108,7 @@ struct TerminalVisibilityDetector {
             if lower.contains("iterm") { return isITermSessionActive(session) }
             if lower == "ghostty" { return isGhosttyTabActive(session) }
             if lower.contains("wezterm") || lower.contains("wez") { return isWezTermTabActive(session) }
+            if lower == "kaku" { return isKakuTabActive(session) }
             if lower.contains("kitty") { return isKittyWindowActive(session) }
             // Don't match "terminal" here — Warp sets TERM_PROGRAM=Apple_Terminal
         }
@@ -207,6 +211,30 @@ struct TerminalVisibilityDetector {
         return false
     }
 
+    /// Check if Kaku's active pane matches by TTY or CWD.
+    /// Mirrors the WezTerm approach since Kaku is a WezTerm fork with an identical CLI.
+    private static func isKakuTabActive(_ session: SessionSnapshot) -> Bool {
+        guard let bin = findKakuBinary() else { return false }
+        guard let json = runProcess(bin, args: ["cli", "list", "--format", "json"]),
+              let panes = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else { return false }
+
+        // In Kaku all panes may report is_active=true, so we match by TTY or CWD
+        // instead of relying on is_active.
+        if let tty = session.ttyPath, !tty.isEmpty {
+            if panes.contains(where: { ($0["tty_name"] as? String) == tty }) {
+                return true
+            }
+        }
+        if let cwd = session.cwd {
+            let cwdUrl = "file://" + cwd
+            if panes.contains(where: {
+                guard let paneCwd = $0["cwd"] as? String else { return false }
+                return paneCwd == cwdUrl || paneCwd == cwd
+            }) { return true }
+        }
+        return false
+    }
+
     // MARK: - kitty
 
     /// Check if kitty's focused window matches by window ID or CWD.
@@ -276,6 +304,17 @@ struct TerminalVisibilityDetector {
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)
         return result.stringValue
+    }
+
+    /// Find the Kaku CLI binary - in app bundle or Homebrew.
+    private static func findKakuBinary() -> String? {
+        let paths = [
+            "/Applications/Kaku.app/Contents/MacOS/kaku",
+            NSHomeDirectory() + "/Applications/Kaku.app/Contents/MacOS/kaku",
+            "/opt/homebrew/bin/kaku",
+            "/usr/local/bin/kaku",
+        ]
+        return paths.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     private static func findBinary(_ name: String) -> String? {

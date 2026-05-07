@@ -17,7 +17,7 @@ jobs:
       - name: Download DMG from release
         run: |
           curl -L \
-            "https://github.com/wxtsky/CodeIsland/releases/download/v${VERSION}/CodeIsland.dmg" \
+            "https://github.com/Gucvii/CodeIsland/releases/download/v${VERSION}/CodeIsland.dmg" \
             -o CodeIsland.dmg
 
       - name: Compute SHA256
@@ -25,7 +25,7 @@ jobs:
 
       - name: Clone homebrew-tap
         run: |
-          git clone "https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/wxtsky/homebrew-tap.git" homebrew-tap
+          git clone "https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/Gucvii/homebrew-tap.git" homebrew-tap
 
       - name: Update Cask formula
         run: |
@@ -35,10 +35,10 @@ jobs:
             version "VERSION_PLACEHOLDER"
             sha256 "SHA256_PLACEHOLDER"
 
-            url "https://github.com/wxtsky/CodeIsland/releases/download/v#{version}/CodeIsland.dmg"
+            url "https://github.com/Gucvii/CodeIsland/releases/download/v#{version}/CodeIsland.dmg"
             name "CodeIsland"
             desc "Menu bar companion for Claude Code, Codex, Gemini CLI and more"
-            homepage "https://github.com/wxtsky/CodeIsland"
+            homepage "https://github.com/Gucvii/CodeIsland"
 
             app "CodeIsland.app"
 

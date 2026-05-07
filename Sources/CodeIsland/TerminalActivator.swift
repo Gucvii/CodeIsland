@@ -2,7 +2,7 @@ import AppKit
 import CodeIslandCore
 
 /// Activates the terminal window/tab running a specific Claude Code session.
-/// Supports tab-level switching for: Ghostty, iTerm2, Terminal.app, WezTerm, kitty.
+/// Supports tab-level switching for: Ghostty, iTerm2, Terminal.app, WezTerm, Kaku, kitty.
 /// Falls back to app-level activation for: Alacritty, Warp, Hyper, Tabby, Rio.
 struct TerminalActivator {
     private static let knownTerminals: [(name: String, bundleId: String)] = [
@@ -10,6 +10,7 @@ struct TerminalActivator {
         ("Ghostty", "com.mitchellh.ghostty"),
         ("iTerm2", "com.googlecode.iterm2"),
         ("WezTerm", "com.github.wez.wezterm"),
+        ("Kaku", "fun.tw93.kaku"),
         ("kitty", "net.kovidgoyal.kitty"),
         ("Alacritty", "org.alacritty"),
         ("Warp", "dev.warp.Warp-Stable"),
@@ -168,6 +169,11 @@ struct TerminalActivator {
 
         if lower.contains("wezterm") || lower.contains("wez") {
             activateWezTerm(ttyPath: effectiveTty, cwd: session.cwd)
+            return
+        }
+
+        if lower.contains("kaku") || session.termBundleId == "fun.tw93.kaku" {
+            activateKaku(ttyPath: effectiveTty, cwd: session.cwd)
             return
         }
 
@@ -670,6 +676,39 @@ struct TerminalActivator {
         }
     }
 
+    // MARK: - Kaku (CLI: kaku cli list + activate-tab, same interface as WezTerm)
+
+    /// Activate a Kaku tab by matching TTY or CWD from `kaku cli list --format json`.
+    /// Mirrors the WezTerm approach since Kaku is a WezTerm fork with an identical CLI.
+    private static func activateKaku(ttyPath: String?, cwd: String?) {
+        bringToFront("Kaku")
+        guard let bin = findBinary("kaku", extraPaths: [
+            "/Applications/Kaku.app/Contents/MacOS/kaku",
+            NSHomeDirectory() + "/Applications/Kaku.app/Contents/MacOS/kaku",
+        ]) else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let json = runProcess(bin, args: ["cli", "list", "--format", "json"]),
+                  let panes = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else { return }
+
+            // Find tab: prefer TTY match, fallback to CWD
+            var tabId: Int?
+            if let tty = ttyPath {
+                tabId = panes.first(where: { ($0["tty_name"] as? String) == tty })?["tab_id"] as? Int
+            }
+            if tabId == nil, let cwd = cwd {
+                let cwdUrl = "file://" + cwd
+                tabId = panes.first(where: {
+                    guard let paneCwd = $0["cwd"] as? String else { return false }
+                    return paneCwd == cwdUrl || paneCwd == cwd
+                })?["tab_id"] as? Int
+            }
+
+            if let id = tabId {
+                _ = runProcess(bin, args: ["cli", "activate-tab", "--tab-id", "\(id)"])
+            }
+        }
+    }
+
     // MARK: - kitty (CLI: kitten @ focus-window/focus-tab)
 
     private static func activateKitty(windowId: String?, cwd: String?, source: String = "claude") {
@@ -822,6 +861,7 @@ struct TerminalActivator {
         else if lower.contains("iterm") { name = "iTerm2" }
         else if lower.contains("terminal") || lower.contains("apple_terminal") { name = "Terminal" }
         else if lower.contains("wezterm") || lower.contains("wez") { name = "WezTerm" }
+        else if lower == "kaku" { name = "Kaku" }
         else if lower.contains("alacritty") || lower.contains("lacritty") { name = "Alacritty" }
         else if lower.contains("kitty") { name = "kitty" }
         else if lower.contains("warp") { name = "Warp" }

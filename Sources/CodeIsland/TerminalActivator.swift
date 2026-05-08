@@ -2,7 +2,7 @@ import AppKit
 import CodeIslandCore
 
 /// Activates the terminal window/tab running a specific Claude Code session.
-/// Supports tab-level switching for: Ghostty, iTerm2, Terminal.app, WezTerm, kitty.
+/// Supports tab-level switching for: Ghostty, iTerm2, Terminal.app, WezTerm, Kaku, kitty.
 /// Falls back to app-level activation for: Alacritty, Warp, Hyper, Tabby, Rio.
 struct TerminalActivator {
     private static let knownTerminals: [(name: String, bundleId: String)] = [
@@ -10,6 +10,7 @@ struct TerminalActivator {
         ("Ghostty", "com.mitchellh.ghostty"),
         ("iTerm2", "com.googlecode.iterm2"),
         ("WezTerm", "com.github.wez.wezterm"),
+        ("Kaku", "fun.tw93.kaku"),
         ("kitty", "net.kovidgoyal.kitty"),
         ("Alacritty", "org.alacritty"),
         ("Warp", "dev.warp.Warp-Stable"),
@@ -168,6 +169,11 @@ struct TerminalActivator {
 
         if lower.contains("wezterm") || lower.contains("wez") {
             activateWezTerm(ttyPath: effectiveTty, cwd: session.cwd)
+            return
+        }
+
+        if lower.contains("kaku") || session.termBundleId == "fun.tw93.kaku" {
+            activateKaku(ttyPath: effectiveTty, cwd: session.cwd, cliPid: session.cliPid)
             return
         }
 
@@ -670,6 +676,52 @@ struct TerminalActivator {
         }
     }
 
+    // MARK: - Kaku (CLI: kaku cli list + activate-pane; JSON uses pane_id, not tab_id like WezTerm)
+
+    /// Activate a Kaku pane by TTY resolved from cliPid, with CWD fallback.
+    /// Uses `ps -o tty=` on the CLI's PID to get the real TTY (bypassing the
+    /// "/dev/tty" issue in hook/bridge TTY capture), then matches against
+    /// `kaku cli list --format json`.
+    private static func activateKaku(ttyPath: String?, cwd: String?, cliPid: pid_t?) {
+        bringToFront("Kaku")
+        guard let bin = findBinary("kaku", extraPaths: [
+            "/Applications/Kaku.app/Contents/MacOS/kaku",
+            NSHomeDirectory() + "/Applications/Kaku.app/Contents/MacOS/kaku",
+        ]) else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let json = runProcess(bin, args: ["cli", "list", "--format", "json"]),
+                  let panes = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]]
+            else { return }
+
+            // Strategy 1: resolve TTY from cliPid via ps (most reliable)
+            var paneId: Int? = resolvePaneByCliPid(cliPid, panes: panes)
+            // Strategy 2: match by TTY path (skip "/dev/tty" — it's the controlling TTY, not specific)
+            if paneId == nil, let tty = ttyPath, tty != "/dev/tty" {
+                paneId = panes.first(where: { ($0["tty_name"] as? String) == tty })?["pane_id"] as? Int
+            }
+            // Strategy 3: match by CWD
+            if paneId == nil, let cwd = cwd {
+                let cwdUrl = "file://" + cwd
+                paneId = panes.first(where: {
+                    guard let paneCwd = $0["cwd"] as? String else { return false }
+                    return paneCwd == cwdUrl || paneCwd == cwd
+                })?["pane_id"] as? Int
+            }
+
+            guard let id = paneId else { return }
+            _ = runProcess(bin, args: ["cli", "activate-pane", "--pane-id", "\(id)"])
+        }
+    }
+
+    /// Resolve pane by looking up the CLI process's TTY via `ps`.
+    /// Falls back to nil when ps is unavailable or the PID has no TTY.
+    /// Delegates to ProcessRunner.ttyForPid to avoid duplicating ps parsing.
+    private static func resolvePaneByCliPid(_ cliPid: pid_t?, panes: [[String: Any]]) -> Int? {
+        guard let pid = cliPid, pid > 0 else { return nil }
+        guard let tty = ProcessRunner.ttyForPid(pid) else { return nil }
+        return panes.first(where: { ($0["tty_name"] as? String) == tty })?["pane_id"] as? Int
+    }
+
     // MARK: - kitty (CLI: kitten @ focus-window/focus-tab)
 
     private static func activateKitty(windowId: String?, cwd: String?, source: String = "claude") {
@@ -822,6 +874,7 @@ struct TerminalActivator {
         else if lower.contains("iterm") { name = "iTerm2" }
         else if lower.contains("terminal") || lower.contains("apple_terminal") { name = "Terminal" }
         else if lower.contains("wezterm") || lower.contains("wez") { name = "WezTerm" }
+        else if lower == "kaku" { name = "Kaku" }
         else if lower.contains("alacritty") || lower.contains("lacritty") { name = "Alacritty" }
         else if lower.contains("kitty") { name = "kitty" }
         else if lower.contains("warp") { name = "Warp" }

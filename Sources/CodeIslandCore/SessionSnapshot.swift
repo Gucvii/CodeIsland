@@ -367,6 +367,7 @@ public struct SessionSnapshot: Sendable {
             if lower.contains("kitty") { return "Kitty" }
             if lower.contains("alacritty") { return "Alacritty" }
             if lower.contains("wezterm") { return "WezTerm" }
+            if lower.contains("kaku") { return "Kaku" }
             // IDE integrated terminals
             if lower.contains("vscode") || lower.contains("vscodium") { return "VS Code" }
             if lower == "com.trae.app" { return "Trae" }

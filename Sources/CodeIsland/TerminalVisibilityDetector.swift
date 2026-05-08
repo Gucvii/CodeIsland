@@ -93,6 +93,9 @@ struct TerminalVisibilityDetector {
         if bid.contains("wezterm") {
             return isWezTermTabActive(session)
         }
+        if bid == "fun.tw93.kaku" {
+            return isKakuTabActive(session)
+        }
         if bid.contains("kitty") {
             return isKittyWindowActive(session)
         }
@@ -105,6 +108,7 @@ struct TerminalVisibilityDetector {
             if lower.contains("iterm") { return isITermSessionActive(session) }
             if lower == "ghostty" { return isGhosttyTabActive(session) }
             if lower.contains("wezterm") || lower.contains("wez") { return isWezTermTabActive(session) }
+            if lower == "kaku" { return isKakuTabActive(session) }
             if lower.contains("kitty") { return isKittyWindowActive(session) }
             // Don't match "terminal" here — Warp sets TERM_PROGRAM=Apple_Terminal
         }
@@ -207,6 +211,42 @@ struct TerminalVisibilityDetector {
         return false
     }
 
+    /// Check if Kaku's active pane matches by TTY or CWD.
+    /// Mirrors the WezTerm list approach, but Kaku uses pane_id (not tab_id).
+    /// Adds cliPid→ps TTY resolution as the most reliable strategy.
+    private static func isKakuTabActive(_ session: SessionSnapshot) -> Bool {
+        guard let bin = findBinary("kaku", extraPaths: [
+            "/Applications/Kaku.app/Contents/MacOS/kaku",
+            NSHomeDirectory() + "/Applications/Kaku.app/Contents/MacOS/kaku",
+        ]) else { return false }
+        guard let json = runProcess(bin, args: ["cli", "list", "--format", "json"]),
+              let panes = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]] else { return false }
+
+        // In Kaku all panes may report is_active=true, so we match by TTY or CWD
+        // instead of relying on is_active.
+        // Strategy 1: resolve TTY from cliPid via ps (most reliable)
+        if let tty = resolveTtyFromPid(session.cliPid) {
+            if panes.contains(where: { ($0["tty_name"] as? String) == tty }) {
+                return true
+            }
+        }
+        // Strategy 2: match by session TTY path (skip "/dev/tty" — controlling TTY, not specific)
+        if let tty = session.ttyPath, tty != "/dev/tty" {
+            if panes.contains(where: { ($0["tty_name"] as? String) == tty }) {
+                return true
+            }
+        }
+        // Strategy 3: match by CWD
+        if let cwd = session.cwd {
+            let cwdUrl = "file://" + cwd
+            if panes.contains(where: {
+                guard let paneCwd = $0["cwd"] as? String else { return false }
+                return paneCwd == cwdUrl || paneCwd == cwd
+            }) { return true }
+        }
+        return false
+    }
+
     // MARK: - kitty
 
     /// Check if kitty's focused window matches by window ID or CWD.
@@ -278,8 +318,16 @@ struct TerminalVisibilityDetector {
         return result.stringValue
     }
 
-    private static func findBinary(_ name: String) -> String? {
-        let paths = [
+    /// Resolve TTY from CLI process PID via `ps`.
+    /// Delegates to ProcessRunner.ttyForPid for shared ps parsing (avoids duplication
+    /// with TerminalActivator.resolvePaneByCliPid).
+    private static func resolveTtyFromPid(_ cliPid: pid_t?) -> String? {
+        guard let pid = cliPid, pid > 0 else { return nil }
+        return ProcessRunner.ttyForPid(pid)
+    }
+
+    private static func findBinary(_ name: String, extraPaths: [String] = []) -> String? {
+        let paths = extraPaths + [
             "/opt/homebrew/bin/\(name)",
             "/usr/local/bin/\(name)",
             "/usr/bin/\(name)",
